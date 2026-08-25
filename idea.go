@@ -203,7 +203,9 @@ type Clause interface {
 }
 
 // value is the only branch in this package. A Clause is expanded as SQL;
-// anything else is bound and becomes a $N.
+// anything else is bound and becomes a $N. An untyped nil is the exception: it
+// produces nothing, so that an optional item can be left in place. A typed nil,
+// such as a *string, is an ordinary value and is bound.
 //
 // group says whether the enclosing sequence is space-separated. A Statement
 // nested there is an operand, so it is parenthesised. An item of a
@@ -399,16 +401,6 @@ func Raw(sql string, vals ...any) Clause {
 			args = append(args, cp[i])
 		}
 		return b.String(), args
-	})
-}
-
-// Lit forces a value to be bound. It is needed only when you want to pass an
-// Id or a keyword constant as a value rather than as an identifier. An ordinary value
-// becomes a $N just by being written as-is.
-func Lit(v any) Clause {
-	return clauseFunc(func(args []any) (string, []any) {
-		args = append(args, v)
-		return fmt.Sprintf("$%d", len(args)), args
 	})
 }
 
