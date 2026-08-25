@@ -1,0 +1,777 @@
+// sqlbuilder — a thin SQL builder for Postgres (design in progress)
+//
+// The implementation works, but it does not cover the whole of SQL syntax.
+// Feedback welcome.
+//
+// This file is a single-file merge for ease of sharing. In real use the
+// implementation would live in `package sql` and be dot-imported by callers:
+//
+//	import . "github.com/awesomepackage/sql"
+//
+// `sql.SELECT(...)` would work too, but it is verbose. Instead every DSL
+// function is uppercased, so it is obvious at a glance that a given identifier
+// belongs to the SQL DSL.
+//
+// ---------------------------------------------------------------------------
+// What this is
+// ---------------------------------------------------------------------------
+//
+// A package for writing SQL in Go. It is not an ORM. What comes out is a SQL
+// string plus a slice of arguments for the placeholders; executing it is left
+// to pgx, database/sql, or whatever else you use.
+//
+//	sql, args := Stm(
+//		SELECT(UsersID, UsersName),
+//		FROM(Users),
+//		WHERE(UsersStatus, EQ, "active", AND, UsersAge, GTE, 18),
+//		ORDER_BY(Frag(UsersID, DESC)),
+//		LIMIT(20),
+//	).ToSQL()
+//
+//	// SELECT users.id, users.name FROM users
+//	// WHERE users.status = $1 AND users.age >= $2 ORDER BY users.id DESC LIMIT $3
+//	// args=[active 18 20]
+//
+// ---------------------------------------------------------------------------
+// Problems this aims to solve
+// ---------------------------------------------------------------------------
+//
+//  1. Keeping table and column names in constants. Writing everything as string
+//     literals scatters the edits a rename requires, and does nothing about
+//     typos. But pulling the names out into constants tends to bury the shape
+//     of the original SQL under `+` concatenation and fmt.Sprintf placeholders.
+//
+//  2. Building queries dynamically. "The WHERE clause grows or shrinks
+//     depending on the API's query parameters" is a constant requirement.
+//     Doing it with pure string manipulation is fiddly, and the $N numbering
+//     breaks easily.
+//
+// ---------------------------------------------------------------------------
+// Problems this does not solve
+// ---------------------------------------------------------------------------
+//
+// These are deliberate omissions. The position taken is that raw SQL carries
+// the same risks, so they are acceptable.
+//
+//   - Type safety — `WHERE users.name = 49` is not rejected statically. Doing
+//     that with Go's type system, without code generation, is impractical.
+//   - Syntactic correctness — a sequence like `SELECT(...), EQ, EQ` is
+//     perfectly writable. Arity is not checked either. This is not a SQL parser.
+//   - Sugar — no conveniences that do not exist in SQL. The goal is to write
+//     SQL in Go, not to write SQL more briefly.
+//
+// ---------------------------------------------------------------------------
+// The central idea
+// ---------------------------------------------------------------------------
+//
+// Go values appear in the same order the SQL tokens do. That is the whole of
+// it. The aim is that you never have to stop and ask "how do I spell that bit
+// of SQL in Go again?"
+//
+//	Shape in SQL          Shape in Go              Example
+//	--------------------  -----------------------  ------------------------------
+//	Keyword with operands Function                 SELECT(...) FROM(...) LIMIT(20)
+//	Keyword without       Kw constant              AND OR NOT DESC JOIN UNION_ALL
+//	Infix operator        Kw constant / OP()       EQ GT LIKE / OP("@>")
+//	Enclosing             Stm(...) Row(...) FUNC()
+//	Identifier            Id constant              UsersID
+//	Literal               A plain Go value         42, "active"
+//
+// There are no methods for building expressions. Operators and keywords alike
+// sit in the same flat token sequence. The reasons are that nesting stays
+// shallow, and that no fixed list of operators has to be maintained.
+//
+// Columns are declared as constants holding qualified names.
+//
+//	const (
+//		Users       = Id("users")
+//		UsersID     = Id("users.id")
+//		UsersStatus = Id("users.status")
+//	)
+//
+// ---------------------------------------------------------------------------
+// How parentheses are handled
+// ---------------------------------------------------------------------------
+//
+// This is the single biggest design decision. SQL's parentheses are split into
+// two kinds.
+//
+// Parentheses with no shorthand form — COUNT(x), IN (...), VALUES (...),
+// DISTINCT ON (...) — map directly onto the parentheses of the Go call:
+// FUNC / Row / IN / DISTINCT_ON.
+//
+// Parentheses that may or may not be present — grouping, FROM (SELECT ...) —
+// are made explicit with Stm. Stm gains parentheses the moment it is nested,
+// and if you do not write it, they do not appear. The builder never guesses at
+// precedence and inserts them on your behalf.
+//
+//	Stm(a, OR, b), AND, c   // (users.role = $1 OR users.role = $2) AND users.status = $3
+//	a, OR, b, AND, c        // users.role = $1 OR users.role = $2 AND users.status = $3
+//
+// By SQL's precedence rules the second means a OR (b AND c). That is intended.
+// What you write is what comes out, so the generated SQL shows you the cause.
+//
+// As the flip side of Stm, use Frag for a multi-token fragment that carries no
+// parentheses. The same applies when one item of a comma-separated clause
+// (SELECT / ORDER BY) is itself several tokens.
+//
+//	ORDER_BY(Frag(UsersID, DESC), Frag(UsersName, ASC, NULLS_LAST))
+//
+// AND / OR are binary operators, but since they are flat tokens, three or more
+// operands are simply listed. If you want parentheses, spell them with Stm.
+//
+// ---------------------------------------------------------------------------
+// Numbering the $N placeholders
+// ---------------------------------------------------------------------------
+//
+// The design in which BuildSQL takes args and returns args is the entirety of
+// the numbering scheme. There is no global counter, and no renumbering pass
+// afterwards. value() is the one and only branch on how a value is treated,
+// and it does not vary by position: if something implements Clause it is
+// expanded as SQL, and if it does not, it becomes a $N.
+//
+//	UsersStatus, EQ, "active"   // users.status = $1   <- a string, so it is bound
+//	OrdersUserID, EQ, UsersID   // orders.user_id = users.id  <- an Id, so it is inlined
+//
+// Because args is handed along in expansion order, the numbering stays
+// sequential no matter how deeply things nest. Fragments are values, so they
+// can be assembled without holding a binder and composed later.
+//
+// ---------------------------------------------------------------------------
+// Known limitations
+// ---------------------------------------------------------------------------
+//
+//   - Raw(sql string) performs no escaping whatsoever, so passing user input to
+//     it leads directly to SQL injection. Pass only constants, or strings
+//     assembled in code.
+//   - Aliasing a table requires declaring a separate constant such as `t.id`.
+//   - Kw and Raw have identical BuildSQL implementations. The distinction
+//     exists only to mark the latter as dangerous.
+//   - Frag shows up fairly often. Space-separated clauses stay flat, but a
+//     comma-separated clause whose item spans several tokens costs one level
+//     of nesting.
+//   - Not yet started: unit tests, verification against a real database, the
+//     WINDOW clause and named windows, MERGE, GROUPING SETS / ROLLUP / CUBE.
+//
+// ---------------------------------------------------------------------------
+// Verification status
+// ---------------------------------------------------------------------------
+//
+// Builds under Go 1.22 and passes go vet and gofmt. The 15 examples at the end
+// of this file have been run and their generated SQL inspected by eye. Run
+// `go run .` to see the output.
+package main
+
+import (
+	"fmt"
+	"strings"
+)
+
+// ===========================================================================
+// Implementation
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Core
+// ---------------------------------------------------------------------------
+
+// Clause is a fragment of SQL. It takes args and returns the fragment plus
+// "args with the values this fragment bound appended". Passing args along this
+// bucket brigade is the entirety of the $N numbering scheme.
+type Clause interface {
+	BuildSQL(args []any) (string, []any)
+}
+
+// A type implementing inner gains parentheses when embedded inside another
+// fragment. Statement is the only implementor. At the top level (ToSQL),
+// BuildSQL is called directly, so no parentheses appear.
+//
+// The branch rides on the type, not on the position.
+type inner interface {
+	innerSQL(args []any) (string, []any)
+}
+
+// value is the only branch in this package. A Clause is expanded as SQL;
+// anything else is bound and becomes a $N.
+//
+// Every entry point runs through here, except the four functions that demand
+// identifiers (INSERT_INTO / ON_CONFLICT / SET / EXCLUDED).
+func value(args []any, v any) (string, []any) {
+	switch c := v.(type) {
+	case nil:
+		return "", args
+	case inner:
+		return c.innerSQL(args)
+	case Clause:
+		return c.BuildSQL(args)
+	}
+	args = append(args, v)
+	return fmt.Sprintf("$%d", len(args)), args
+}
+
+func join(args []any, sep string, vs []any) (string, []any) {
+	parts := make([]string, 0, len(vs))
+	var s string
+	for _, v := range vs {
+		s, args = value(args, v)
+		if s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, sep), args
+}
+
+func dup(vs []any) []any {
+	cp := make([]any, len(vs))
+	copy(cp, vs)
+	return cp
+}
+
+// clauseFunc is a function adapter. It exists to avoid adding another
+// exported type.
+type clauseFunc func([]any) (string, []any)
+
+func (f clauseFunc) BuildSQL(args []any) (string, []any) {
+	if f == nil {
+		return "", args
+	}
+	return f(args)
+}
+
+// ---------------------------------------------------------------------------
+// Stm / Frag — space-separated concatenation
+// ---------------------------------------------------------------------------
+
+// Statement is a space-separated sequence of tokens.
+type Statement struct{ items []any }
+
+// Stm builds a space-separated group. Nesting it adds parentheses.
+//
+//	Stm(a, b)         -> "a b"
+//	Stm(a, Stm(b, c)) -> "a (b c)"
+//
+// Subqueries and grouped conditions are spelled the same way.
+func Stm(items ...any) Statement { return Statement{items: dup(items)} }
+
+func (s Statement) BuildSQL(args []any) (string, []any) {
+	return join(args, " ", s.items)
+}
+
+func (s Statement) innerSQL(args []any) (string, []any) {
+	sql, args := s.BuildSQL(args)
+	if sql == "" {
+		return "", args
+	}
+	return "(" + sql + ")", args
+}
+
+// ToSQL assembles the whole statement. No parentheses wrap the outermost level.
+func (s Statement) ToSQL() (string, []any) { return s.BuildSQL(nil) }
+
+// Frag is space-separated too, but nesting it adds no parentheses. It is the
+// entry point for "several tokens that carry no parentheses". Use it also when
+// one item of a comma-separated clause (SELECT / ORDER BY) spans several
+// tokens.
+//
+//	ORDER_BY(Frag(UsersID, DESC), Frag(UsersName, ASC, NULLS_LAST))
+//	SELECT(Frag(FUNC("COUNT", STAR), AS("n")))
+func Frag(items ...any) Clause {
+	cp := dup(items)
+	return clauseFunc(func(args []any) (string, []any) {
+		return join(args, " ", cp)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Basic types
+// ---------------------------------------------------------------------------
+
+// Id is an identifier. Its underlying type is string so that it can be
+// declared with const.
+type Id string
+
+func (i Id) BuildSQL(args []any) (string, []any) { return string(i), args }
+
+// Kw covers keywords and operator symbols. It can be declared as a constant,
+// and its zero value is the empty string, which is skipped during joining.
+type Kw string
+
+func (k Kw) BuildSQL(args []any) (string, []any) { return string(k), args }
+
+// OP turns an infix operator that is not in the fixed list into a Kw:
+// JSONB's @>, the array &&, the regex ~, full-text search's @@, and so on.
+func OP(symbol string) Kw { return Kw(symbol) }
+
+// Raw performs no escaping at all. Pass only constants, or strings assembled
+// in code.
+type Raw string
+
+func (r Raw) BuildSQL(args []any) (string, []any) { return string(r), args }
+
+// Lit forces a value to be bound. It is needed only when you want to pass an
+// Id or a Kw as a value rather than as an identifier. An ordinary value
+// becomes a $N just by being written as-is.
+func Lit(v any) Clause {
+	return clauseFunc(func(args []any) (string, []any) {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args)), args
+	})
+}
+
+// Row is a comma-separated parenthesised list. Row values, the list in an IN,
+// and a single row of VALUES are all spelled the same way.
+//
+//	Row("bob", 42)             -> "($1, $2)"
+//	Row(UsersCreated, UsersID) -> "(users.created_at, users.id)"
+func Row(vs ...any) Clause {
+	cp := dup(vs)
+	return clauseFunc(func(args []any) (string, []any) {
+		sql, args := join(args, ", ", cp)
+		return "(" + sql + ")", args
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Keyword constants — the ones that take no operands
+// ---------------------------------------------------------------------------
+
+const (
+	AND Kw = "AND"
+	OR  Kw = "OR"
+	NOT Kw = "NOT"
+
+	EQ    Kw = "="
+	NE    Kw = "<>"
+	GT    Kw = ">"
+	GTE   Kw = ">="
+	LT    Kw = "<"
+	LTE   Kw = "<="
+	LIKE  Kw = "LIKE"
+	ILIKE Kw = "ILIKE"
+
+	IS_NULL     Kw = "IS NULL"
+	IS_NOT_NULL Kw = "IS NOT NULL"
+
+	ASC         Kw = "ASC"
+	DESC        Kw = "DESC"
+	NULLS_FIRST Kw = "NULLS FIRST"
+	NULLS_LAST  Kw = "NULLS LAST"
+
+	JOIN       Kw = "JOIN"
+	LEFT_JOIN  Kw = "LEFT JOIN"
+	INNER_JOIN Kw = "INNER JOIN"
+	CROSS_JOIN Kw = "CROSS JOIN"
+	LATERAL    Kw = "LATERAL"
+
+	UNION        Kw = "UNION"
+	UNION_ALL    Kw = "UNION ALL"
+	INTERSECT    Kw = "INTERSECT"
+	EXCEPT       Kw = "EXCEPT"
+	MATERIALIZED Kw = "MATERIALIZED"
+
+	DO_UPDATE  Kw = "DO UPDATE"
+	DO_NOTHING Kw = "DO NOTHING"
+
+	CASE Kw = "CASE"
+	END  Kw = "END"
+
+	OVER   Kw = "OVER"
+	FILTER Kw = "FILTER"
+
+	STAR     Kw = "*"
+	DISTINCT Kw = "DISTINCT"
+	TRUE     Kw = "TRUE"
+	FALSE    Kw = "FALSE"
+	NULL     Kw = "NULL"
+)
+
+// ---------------------------------------------------------------------------
+// Keyword functions — the ones that take operands
+// ---------------------------------------------------------------------------
+
+func keyword(kw, sep string, vs []any) Clause {
+	cp := dup(vs)
+	return clauseFunc(func(args []any) (string, []any) {
+		s, args := join(args, sep, cp)
+		if s == "" {
+			return kw, args
+		}
+		return kw + " " + s, args
+	})
+}
+
+const (
+	comma = ", "
+	space = " "
+)
+
+func SELECT(vs ...any) Clause         { return keyword("SELECT", comma, vs) }
+func FROM(vs ...any) Clause           { return keyword("FROM", comma, vs) }
+func WHERE(vs ...any) Clause          { return keyword("WHERE", space, vs) }
+func GROUP_BY(vs ...any) Clause       { return keyword("GROUP BY", comma, vs) }
+func HAVING(vs ...any) Clause         { return keyword("HAVING", space, vs) }
+func ORDER_BY(vs ...any) Clause       { return keyword("ORDER BY", comma, vs) }
+func ON(vs ...any) Clause             { return keyword("ON", space, vs) }
+func RETURNING(vs ...any) Clause      { return keyword("RETURNING", comma, vs) }
+func PARTITION_BY(vs ...any) Clause   { return keyword("PARTITION BY", comma, vs) }
+func WITH(vs ...any) Clause           { return keyword("WITH", comma, vs) }
+func WITH_RECURSIVE(vs ...any) Clause { return keyword("WITH RECURSIVE", comma, vs) }
+func WHEN(vs ...any) Clause           { return keyword("WHEN", space, vs) }
+func VALUES(rows ...any) Clause       { return keyword("VALUES", comma, rows) }
+
+// Keywords that take a single value.
+func valueKeyword(kw string, v any) Clause {
+	return clauseFunc(func(args []any) (string, []any) {
+		s, args := value(args, v)
+		return kw + " " + s, args
+	})
+}
+
+func LIMIT(v any) Clause  { return valueKeyword("LIMIT", v) }
+func OFFSET(v any) Clause { return valueKeyword("OFFSET", v) }
+func THEN(v any) Clause   { return valueKeyword("THEN", v) }
+func ELSE(v any) Clause   { return valueKeyword("ELSE", v) }
+
+// IN / EXISTS / ANY reuse whatever parentheses their operand already carries.
+// Pass Row(...) for a list, or Stm(...) for a subquery.
+//
+//	IN(Row(1, 2, 3))          -> "IN ($1, $2, $3)"
+//	IN(Stm(SELECT(...), ...)) -> "IN (SELECT ...)"
+func IN(v any) Clause     { return valueKeyword("IN", v) }
+func EXISTS(v any) Clause { return valueKeyword("EXISTS", v) }
+func ANY(v any) Clause    { return valueKeyword("ANY", v) }
+func CAST(v any) Clause   { return valueKeyword("::", v) }
+
+// Where parentheses are mandatory (no shorthand form exists), the function
+// emits them itself.
+func DISTINCT_ON(vs ...any) Clause {
+	cp := dup(vs)
+	return clauseFunc(func(args []any) (string, []any) {
+		s, args := join(args, comma, cp)
+		return "DISTINCT ON (" + s + ")", args
+	})
+}
+
+// FUNC covers any SQL function. It is the single entry point that spares us
+// from growing separate COUNT / SUM / COALESCE / PERCENTILE_CONT helpers.
+func FUNC(name string, vs ...any) Clause {
+	cp := dup(vs)
+	return clauseFunc(func(args []any) (string, []any) {
+		s, args := join(args, comma, cp)
+		return name + "(" + s + ")", args
+	})
+}
+
+// AS introduces an alias. It takes an identifier, so the parameter is fixed
+// to string.
+func AS(alias string) Clause { return Kw("AS " + alias) }
+
+// DEF defines a CTE.
+func DEF(name string, q any) Clause {
+	return clauseFunc(func(args []any) (string, []any) {
+		s, args := value(args, q)
+		return name + " AS " + s, args
+	})
+}
+
+// ---------------------------------------------------------------------------
+// The four places that need unqualified names — fixing the parameter type to
+// Id keeps expressions and Raw out
+// ---------------------------------------------------------------------------
+
+func unqualify(i Id) string {
+	s := string(i)
+	if n := strings.LastIndex(s, "."); n >= 0 {
+		return s[n+1:]
+	}
+	return s
+}
+
+func unqualifiedList(cols []Id, alwaysParen bool) string {
+	names := make([]string, len(cols))
+	for i, c := range cols {
+		names[i] = unqualify(c)
+	}
+	joined := strings.Join(names, ", ")
+	if alwaysParen || len(cols) > 1 {
+		return "(" + joined + ")"
+	}
+	return joined
+}
+
+func INSERT_INTO(table Id, cols ...Id) Clause {
+	return Kw("INSERT INTO " + string(table) + " " + unqualifiedList(cols, true))
+}
+
+func ON_CONFLICT(cols ...Id) Clause { return Kw("ON CONFLICT " + unqualifiedList(cols, true)) }
+
+func SET(cols ...Id) Clause { return Kw("SET " + unqualifiedList(cols, false)) }
+
+func EXCLUDED(col Id) Clause { return Kw("EXCLUDED." + unqualify(col)) }
+
+func UPDATE(table Id) Clause      { return Kw("UPDATE " + string(table)) }
+func DELETE_FROM(table Id) Clause { return Kw("DELETE FROM " + string(table)) }
+
+// ===========================================================================
+// Examples — run `go run .` to see the output
+// ===========================================================================
+
+const (
+	Users          = Id("users")
+	UsersID        = Id("users.id")
+	UsersName      = Id("users.name")
+	UsersEmail     = Id("users.email")
+	UsersStatus    = Id("users.status")
+	UsersAge       = Id("users.age")
+	UsersCreated   = Id("users.created_at")
+	UsersMeta      = Id("users.meta")
+	UsersIsPaid    = Id("users.paid")
+	UsersHasTicket = Id("users.has_ticket")
+	UsersParentID  = Id("users.parent_id")
+
+	Orders        = Id("orders")
+	OrdersID      = Id("orders.id")
+	OrdersUserID  = Id("orders.user_id")
+	OrdersTotal   = Id("orders.total")
+	OrdersCreated = Id("orders.created_at")
+)
+
+// all is a folding helper. It belongs on the caller's side, not in the
+// package. Because it returns a Stm, parentheses appear as soon as it nests.
+func all(cs []any) Clause {
+	out := make([]any, 0, len(cs)*2)
+	for i, c := range cs {
+		if i > 0 {
+			out = append(out, AND)
+		}
+		out = append(out, c)
+	}
+	return Stm(out...)
+}
+
+type filter struct {
+	Status string
+	Cursor int
+}
+
+func main() {
+	show("1. Basic", basic())
+	show("2. Keyset pagination (row values)", keyset())
+	show("3. Set operation over parenthesised terms", unionWithLimit())
+	show("4. Arbitrary infix operators", operators())
+	show("5. DISTINCT ON / FILTER", distinctOnAndFilter())
+	show("6. CASE expression", caseExpr())
+	show("7. UPSERT", upsert())
+	show("8. UPDATE ... FROM", updateFrom())
+	show("9. Window function with a frame", window())
+	show("10. LATERAL", lateral())
+	show("11. Recursive CTE", recursiveCTE())
+	show("12. $N numbering across three levels of nesting", nested())
+	show("13. Dynamic conditions (none)", dynamic(filter{}))
+	show("14. Dynamic conditions (two)", dynamic(filter{Status: "active", Cursor: 100}))
+	show("15. IN / EXISTS / NOT", inExistsNot())
+}
+
+func show(title string, s Statement) {
+	sql, args := s.ToSQL()
+	fmt.Printf("--- %s\n%s\nargs=%v\n\n", title, sql, args)
+}
+
+func basic() Statement {
+	return Stm(
+		SELECT(UsersID, UsersName),
+		FROM(Users),
+		WHERE(
+			UsersID, EQ, 0, AND,
+			UsersName, GT, "name", AND,
+			Stm(UsersIsPaid, OR, UsersHasTicket),
+		),
+	)
+}
+
+// When one item of a comma-separated clause spans several tokens, wrap it in
+// Frag.
+func keyset() Statement {
+	return Stm(
+		SELECT(UsersID),
+		FROM(Users),
+		WHERE(Row(UsersCreated, UsersID), LT, Row("2025-06-01", 500)),
+		ORDER_BY(Frag(UsersCreated, DESC), Frag(UsersID, DESC, NULLS_LAST)),
+		LIMIT(20),
+	)
+}
+
+// Since nesting a Stm adds parentheses, a set-operation term can carry LIMIT.
+func unionWithLimit() Statement {
+	return Stm(
+		Stm(SELECT(UsersID), FROM(Users), ORDER_BY(UsersID), LIMIT(10)),
+		UNION_ALL,
+		Stm(SELECT(OrdersUserID), FROM(Orders), ORDER_BY(OrdersID), LIMIT(10)),
+	)
+}
+
+// Operators are written as Kw constants or via OP(). There is no fixed list.
+func operators() Statement {
+	return Stm(
+		SELECT(UsersID),
+		FROM(Users),
+		WHERE(
+			UsersMeta, OP("@>"), Raw(`'{"vip": true}'`), AND,
+			UsersName, OP("~"), "^a", AND,
+			UsersStatus, OP("IS DISTINCT FROM"), "banned", AND,
+			UsersEmail, IS_NOT_NULL,
+		),
+	)
+}
+
+func distinctOnAndFilter() Statement {
+	return Stm(
+		SELECT(
+			Frag(DISTINCT_ON(UsersID), UsersID),
+			UsersName,
+			Frag(FUNC("COUNT", STAR), FILTER, Stm(WHERE(UsersIsPaid)), AS("paid_count")),
+		),
+		FROM(Users),
+		GROUP_BY(UsersID, UsersName),
+		ORDER_BY(UsersID, Frag(UsersCreated, DESC)),
+	)
+}
+
+func caseExpr() Statement {
+	return Stm(
+		SELECT(
+			UsersID,
+			Frag(CASE,
+				WHEN(UsersAge, GTE, 18), THEN("adult"),
+				WHEN(UsersAge, GTE, 13), THEN("teen"),
+				ELSE("child"),
+				END, AS("bucket"),
+			),
+		),
+		FROM(Users),
+	)
+}
+
+func upsert() Statement {
+	return Stm(
+		INSERT_INTO(Users, UsersName, UsersEmail),
+		VALUES(
+			Row("bob", "bob@x"),
+			Row("amy", "amy@x"),
+		),
+		ON_CONFLICT(UsersEmail),
+		DO_UPDATE, SET(UsersName), EQ, EXCLUDED(UsersName),
+		RETURNING(UsersID),
+	)
+}
+
+func updateFrom() Statement {
+	return Stm(
+		UPDATE(Users), SET(UsersStatus), EQ, "vip",
+		FROM(Orders),
+		WHERE(OrdersUserID, EQ, UsersID, AND, OrdersTotal, GT, 10000),
+	)
+}
+
+func window() Statement {
+	return Stm(
+		SELECT(
+			UsersName,
+			Frag(
+				FUNC("SUM", OrdersTotal), OVER, Stm(
+					PARTITION_BY(OrdersUserID),
+					ORDER_BY(OrdersCreated),
+					Raw("ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"),
+				),
+				AS("running_total"),
+			),
+		),
+		FROM(Orders),
+	)
+}
+
+// LATERAL needs no dedicated syntax. It is just a prefix (LATERAL), an
+// enclosure (Stm) and a suffix (AS) placed in sequence.
+func lateral() Statement {
+	perUser := Stm(
+		SELECT(OrdersID, OrdersTotal),
+		FROM(Orders),
+		WHERE(OrdersUserID, EQ, UsersID),
+		ORDER_BY(Frag(OrdersTotal, DESC)),
+		LIMIT(3),
+	)
+	return Stm(
+		SELECT(UsersName, Id("t.total")),
+		FROM(Users),
+		JOIN, LATERAL, perUser, AS("t"), ON(TRUE),
+	)
+}
+
+func recursiveCTE() Statement {
+	seed := Frag(
+		SELECT(UsersID, UsersParentID),
+		FROM(Users),
+		WHERE(UsersID, EQ, 1),
+	)
+	step := Frag(
+		SELECT(UsersID, UsersParentID),
+		FROM(Users),
+		JOIN, Id("tree"), ON(UsersParentID, EQ, Id("tree.id")),
+	)
+	return Stm(
+		WITH_RECURSIVE(DEF("tree", Stm(seed, UNION_ALL, step))),
+		SELECT(STAR),
+		FROM(Id("tree")),
+	)
+}
+
+func nested() Statement {
+	inner := Stm(
+		SELECT(OrdersUserID),
+		FROM(Orders),
+		WHERE(OrdersTotal, GT, 100),
+	)
+	middle := Stm(
+		SELECT(UsersID),
+		FROM(Users),
+		WHERE(UsersID, IN(inner), AND, UsersAge, GT, 18),
+	)
+	return Stm(
+		SELECT(FUNC("COUNT", STAR)),
+		FROM(Frag(middle, AS("x"))),
+		WHERE(Id("x.id"), LT, 1000),
+	)
+}
+
+func inExistsNot() Statement {
+	sub := Stm(SELECT(1), FROM(Orders), WHERE(OrdersUserID, EQ, UsersID))
+	return Stm(
+		SELECT(UsersID),
+		FROM(Users),
+		WHERE(
+			UsersStatus, IN(Row("active", "trial")), AND,
+			NOT, EXISTS(sub), AND,
+			UsersID, EQ, ANY(Row(1, 2, 3)),
+		),
+	)
+}
+
+// Adding a clause and adding a condition are both written with the same append.
+func dynamic(f filter) Statement {
+	var conds []any
+	if f.Status != "" {
+		conds = append(conds, Frag(UsersStatus, EQ, f.Status))
+	}
+	if f.Cursor > 0 {
+		conds = append(conds, Frag(UsersID, GT, f.Cursor))
+	}
+
+	parts := []any{SELECT(UsersID), FROM(Users)}
+	if len(conds) > 0 {
+		parts = append(parts, WHERE(all(conds)))
+	}
+	parts = append(parts, ORDER_BY(UsersID), LIMIT(20))
+
+	return Stm(parts...)
+}
+
