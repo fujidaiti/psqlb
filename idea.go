@@ -3,8 +3,9 @@
 // The implementation works, but it does not cover the whole of SQL syntax.
 // Feedback welcome.
 //
-// This file is a single-file merge for ease of sharing. In real use the
-// implementation would live in `package sql` and be dot-imported by callers:
+// The implementation is this one file. The examples are in idea_test.go.
+//
+// The package is named `sql` because it is meant to be dot-imported by callers:
 //
 //	import . "github.com/awesomepackage/sql"
 //
@@ -157,17 +158,18 @@
 //   - Aliasing a table requires declaring a separate constant such as `t.id`.
 //   - A subquery used as a bare item of a comma-separated clause needs one Stm
 //     around it. Forgetting it produces wrong SQL rather than a compile error.
-//   - Not yet started: unit tests, verification against a real database, the
-//     WINDOW clause and named windows, MERGE, GROUPING SETS / ROLLUP / CUBE.
+//   - Not yet started: verification against a real database, the WINDOW clause
+//     and named windows, MERGE, GROUPING SETS / ROLLUP / CUBE.
 //
 // ---------------------------------------------------------------------------
 // Verification status
 // ---------------------------------------------------------------------------
 //
-// Builds under Go 1.22 and passes go vet and gofmt. The 15 examples at the end
-// of this file have been run and their generated SQL inspected by eye. Run
-// `go run .` to see the output.
-package main
+// Builds under Go 1.22 and passes go vet and gofmt. The 15 examples in
+// idea_test.go check the generated SQL and the bound arguments against the
+// strings they are expected to produce; run `go test` to check them. Nothing
+// has yet been run against a real database.
+package sql
 
 import (
 	"fmt"
@@ -496,264 +498,3 @@ func EXCLUDED(col Id) Clause { return Raw("EXCLUDED." + unqualify(col)) }
 
 func UPDATE(table Id) Clause      { return Raw("UPDATE " + string(table)) }
 func DELETE_FROM(table Id) Clause { return Raw("DELETE FROM " + string(table)) }
-
-// ===========================================================================
-// Examples — run `go run .` to see the output
-// ===========================================================================
-
-const (
-	Users          = Id("users")
-	UsersID        = Id("users.id")
-	UsersName      = Id("users.name")
-	UsersEmail     = Id("users.email")
-	UsersStatus    = Id("users.status")
-	UsersAge       = Id("users.age")
-	UsersCreated   = Id("users.created_at")
-	UsersMeta      = Id("users.meta")
-	UsersIsPaid    = Id("users.paid")
-	UsersHasTicket = Id("users.has_ticket")
-	UsersParentID  = Id("users.parent_id")
-
-	Orders        = Id("orders")
-	OrdersID      = Id("orders.id")
-	OrdersUserID  = Id("orders.user_id")
-	OrdersTotal   = Id("orders.total")
-	OrdersCreated = Id("orders.created_at")
-)
-
-type filter struct {
-	Status string
-	Cursor int
-}
-
-func main() {
-	show("1. Basic", basic())
-	show("2. Keyset pagination (row values)", keyset())
-	show("3. Set operation over parenthesised terms", unionWithLimit())
-	show("4. Arbitrary infix operators", operators())
-	show("5. DISTINCT ON / FILTER", distinctOnAndFilter())
-	show("6. CASE expression", caseExpr())
-	show("7. UPSERT", upsert())
-	show("8. UPDATE ... FROM", updateFrom())
-	show("9. Window function with a frame", window())
-	show("10. LATERAL", lateral())
-	show("11. Recursive CTE", recursiveCTE())
-	show("12. $N numbering across three levels of nesting", nested())
-	show("13. Dynamic conditions (none)", dynamic(filter{}))
-	show("14. Dynamic conditions (two)", dynamic(filter{Status: "active", Cursor: 100}))
-	show("15. IN / EXISTS / NOT", inExistsNot())
-}
-
-func show(title string, s Statement) {
-	sql, args := s.ToSQL()
-	fmt.Printf("--- %s\n%s\nargs=%v\n\n", title, sql, args)
-}
-
-func basic() Statement {
-	return Stm(
-		SELECT(UsersID, UsersName),
-		FROM(Users),
-		WHERE(
-			UsersID, EQ, 0, AND,
-			UsersName, GT, "name", AND,
-			Stm(UsersIsPaid, OR, UsersHasTicket),
-		),
-	)
-}
-
-// When one item of a comma-separated clause spans several tokens, wrap it in
-// Stm. As an item of a comma-separated clause it carries no parentheses.
-func keyset() Statement {
-	return Stm(
-		SELECT(UsersID),
-		FROM(Users),
-		WHERE(Row(UsersCreated, UsersID), LT, Row("2025-06-01", 500)),
-		ORDER_BY(Stm(UsersCreated, DESC), Stm(UsersID, DESC, NULLS_LAST)),
-		LIMIT(20),
-	)
-}
-
-// Since nesting a Stm adds parentheses, a set-operation term can carry LIMIT.
-func unionWithLimit() Statement {
-	return Stm(
-		Stm(SELECT(UsersID), FROM(Users), ORDER_BY(UsersID), LIMIT(10)),
-		UNION_ALL,
-		Stm(SELECT(OrdersUserID), FROM(Orders), ORDER_BY(OrdersID), LIMIT(10)),
-	)
-}
-
-// Operators are written as Raw constants or via Raw(). There is no fixed list.
-func operators() Statement {
-	return Stm(
-		SELECT(UsersID),
-		FROM(Users),
-		WHERE(
-			UsersMeta, Raw("@>"), Raw(`'{"vip": true}'`), AND,
-			UsersName, Raw("~"), "^a", AND,
-			UsersStatus, Raw("IS DISTINCT FROM"), "banned", AND,
-			UsersEmail, IS_NOT_NULL,
-		),
-	)
-}
-
-func distinctOnAndFilter() Statement {
-	return Stm(
-		SELECT(
-			Stm(DISTINCT_ON(UsersID), UsersID),
-			UsersName,
-			Stm(FUNC("COUNT", STAR), FILTER, Stm(WHERE(UsersIsPaid)), AS("paid_count")),
-		),
-		FROM(Users),
-		GROUP_BY(UsersID, UsersName),
-		ORDER_BY(UsersID, Stm(UsersCreated, DESC)),
-	)
-}
-
-func caseExpr() Statement {
-	return Stm(
-		SELECT(
-			UsersID,
-			Stm(CASE,
-				WHEN(UsersAge, GTE, 18), THEN("adult"),
-				WHEN(UsersAge, GTE, 13), THEN("teen"),
-				ELSE("child"),
-				END, AS("bucket"),
-			),
-		),
-		FROM(Users),
-	)
-}
-
-func upsert() Statement {
-	return Stm(
-		INSERT_INTO(Users, UsersName, UsersEmail),
-		VALUES(
-			Row("bob", "bob@x"),
-			Row("amy", "amy@x"),
-		),
-		ON_CONFLICT(UsersEmail),
-		DO_UPDATE, SET(UsersName), EQ, EXCLUDED(UsersName),
-		RETURNING(UsersID),
-	)
-}
-
-func updateFrom() Statement {
-	return Stm(
-		UPDATE(Users), SET(UsersStatus), EQ, "vip",
-		FROM(Orders),
-		WHERE(OrdersUserID, EQ, UsersID, AND, OrdersTotal, GT, 10000),
-	)
-}
-
-func window() Statement {
-	return Stm(
-		SELECT(
-			UsersName,
-			Stm(
-				FUNC("SUM", OrdersTotal), OVER, Stm(
-					PARTITION_BY(OrdersUserID),
-					ORDER_BY(OrdersCreated),
-					Raw("ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"),
-				),
-				AS("running_total"),
-			),
-		),
-		FROM(Orders),
-	)
-}
-
-// LATERAL needs no dedicated syntax. It is just a prefix (LATERAL), an
-// enclosure (Stm) and a suffix (AS) placed in sequence.
-func lateral() Statement {
-	perUser := Stm(
-		SELECT(OrdersID, OrdersTotal),
-		FROM(Orders),
-		WHERE(OrdersUserID, EQ, UsersID),
-		ORDER_BY(Stm(OrdersTotal, DESC)),
-		LIMIT(3),
-	)
-	return Stm(
-		SELECT(UsersName, Id("t.total")),
-		FROM(Users),
-		JOIN, LATERAL, perUser, AS("t"), ON(TRUE),
-	)
-}
-
-// The two branches of the union are one flat token sequence, so neither is
-// parenthesised. DEF supplies the parentheses the CTE body always has.
-func recursiveCTE() Statement {
-	body := Stm(
-		SELECT(UsersID, UsersParentID),
-		FROM(Users),
-		WHERE(UsersID, EQ, 1),
-
-		UNION_ALL,
-
-		SELECT(UsersID, UsersParentID),
-		FROM(Users),
-		JOIN, Id("tree"), ON(UsersParentID, EQ, Id("tree.id")),
-	)
-	return Stm(
-		WITH_RECURSIVE(DEF("tree", body)),
-		SELECT(STAR),
-		FROM(Id("tree")),
-	)
-}
-
-func nested() Statement {
-	inner := Stm(
-		SELECT(OrdersUserID),
-		FROM(Orders),
-		WHERE(OrdersTotal, GT, 100),
-	)
-	middle := Stm(
-		SELECT(UsersID),
-		FROM(Users),
-		WHERE(UsersID, IN(inner), AND, UsersAge, GT, 18),
-	)
-	return Stm(
-		SELECT(FUNC("COUNT", STAR)),
-		FROM(Stm(middle, AS("x"))),
-		WHERE(Id("x.id"), LT, 1000),
-	)
-}
-
-func inExistsNot() Statement {
-	sub := Stm(SELECT(1), FROM(Orders), WHERE(OrdersUserID, EQ, UsersID))
-	return Stm(
-		SELECT(UsersID),
-		FROM(Users),
-		WHERE(
-			UsersStatus, IN(Row("active", "trial")), AND,
-			NOT, EXISTS(sub), AND,
-			UsersID, EQ, ANY(Row(1, 2, 3)),
-		),
-	)
-}
-
-// Adding a clause and adding a condition are both written with the same append.
-// Conditions are spliced in as tokens rather than wrapped, so no parentheses
-// appear around them. Wrap them in Stm where a group is needed.
-func dynamic(f filter) Statement {
-	var conds []any
-	add := func(tokens ...any) {
-		if len(conds) > 0 {
-			conds = append(conds, AND)
-		}
-		conds = append(conds, tokens...)
-	}
-	if f.Status != "" {
-		add(UsersStatus, EQ, f.Status)
-	}
-	if f.Cursor > 0 {
-		add(UsersID, GT, f.Cursor)
-	}
-
-	parts := []any{SELECT(UsersID), FROM(Users)}
-	if len(conds) > 0 {
-		parts = append(parts, WHERE(conds...))
-	}
-	parts = append(parts, ORDER_BY(UsersID), LIMIT(20))
-
-	return Stm(parts...)
-}
