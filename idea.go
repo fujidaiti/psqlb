@@ -24,7 +24,7 @@
 //		SELECT(UsersID, UsersName),
 //		FROM(Users),
 //		WHERE(UsersStatus, EQ, "active", AND, UsersAge, GTE, 18),
-//		ORDER_BY(Frag(UsersID, DESC)),
+//		ORDER_BY(Stm(UsersID, DESC)),
 //		LIMIT(20),
 //	).ToSQL()
 //
@@ -101,21 +101,30 @@
 // FUNC / Row / IN / DISTINCT_ON.
 //
 // Parentheses that may or may not be present — grouping, FROM (SELECT ...) —
-// are made explicit with Stm. Stm gains parentheses the moment it is nested,
-// and if you do not write it, they do not appear. The builder never guesses at
-// precedence and inserts them on your behalf.
+// are written with Stm, and whether they appear depends on where the Stm sits.
+// A space-separated sequence is where SQL may need grouping, so a nested Stm is
+// parenthesised there. An item of a comma-separated clause is a single
+// expression, and SQL never puts parentheses around one, so a nested Stm is not
+// parenthesised there.
 //
-//	Stm(a, OR, b), AND, c   // (users.role = $1 OR users.role = $2) AND users.status = $3
-//	a, OR, b, AND, c        // users.role = $1 OR users.role = $2 AND users.status = $3
+//	WHERE(Stm(a, OR, b), AND, c)                      // WHERE (a OR b) AND c
+//	WHERE(a, OR, b, AND, c)                           // WHERE a OR b AND c
+//	ORDER_BY(Stm(UsersID, DESC), Stm(UsersName, ASC)) // ORDER BY users.id DESC, users.name ASC
 //
 // By SQL's precedence rules the second means a OR (b AND c). That is intended.
-// What you write is what comes out, so the generated SQL shows you the cause.
+// The builder never guesses at precedence and inserts parentheses on your
+// behalf. What you write is what comes out, so the generated SQL shows you the
+// cause.
 //
-// As the flip side of Stm, use Frag for a multi-token fragment that carries no
-// parentheses. The same applies when one item of a comma-separated clause
-// (SELECT / ORDER BY) is itself several tokens.
+// One consequence is worth knowing. A subquery used as a bare item of a
+// comma-separated clause needs one Stm around it, because that is what places
+// it in a space-separated sequence.
 //
-//	ORDER_BY(Frag(UsersID, DESC), Frag(UsersName, ASC, NULLS_LAST))
+//	SELECT(Stm(sub))          // SELECT (SELECT ...)
+//	SELECT(Stm(sub, AS("n"))) // SELECT (SELECT ...) AS n
+//	SELECT(sub)               // SELECT SELECT ...  <- wrong
+//
+// With an alias, which is the usual case, it costs nothing extra.
 //
 // AND / OR are binary operators, but since they are flat tokens, three or more
 // operands are simply listed. If you want parentheses, spell them with Stm.
@@ -126,15 +135,16 @@
 //
 // The design in which BuildSQL takes args and returns args is the entirety of
 // the numbering scheme. There is no global counter, and no renumbering pass
-// afterwards. value() is the one and only branch on how a value is treated,
-// and it does not vary by position: if something implements Clause it is
-// expanded as SQL, and if it does not, it becomes a $N.
+// afterwards. value() is the one and only branch on how a value is treated:
+// if something implements Clause it is expanded as SQL, and if it does not, it
+// becomes a $N. Position has no say in that; it decides only whether a nested
+// Stm is parenthesised.
 //
 //	UsersStatus, EQ, "active"   // users.status = $1   <- a string, so it is bound
 //	OrdersUserID, EQ, UsersID   // orders.user_id = users.id  <- an Id, so it is inlined
 //
 // Because args is handed along in expansion order, the numbering stays
-// sequential no matter how deeply things nest. Fragments are values, so they
+// sequential no matter how deeply things nest. Statements are values, so they
 // can be assembled without holding a binder and composed later.
 //
 // ---------------------------------------------------------------------------
@@ -145,9 +155,8 @@
 //     it leads directly to SQL injection. Pass only constants, or strings
 //     assembled in code.
 //   - Aliasing a table requires declaring a separate constant such as `t.id`.
-//   - Frag shows up fairly often. Space-separated clauses stay flat, but a
-//     comma-separated clause whose item spans several tokens costs one level
-//     of nesting.
+//   - A subquery used as a bare item of a comma-separated clause needs one Stm
+//     around it. Forgetting it produces wrong SQL rather than a compile error.
 //   - Not yet started: unit tests, verification against a real database, the
 //     WINDOW clause and named windows, MERGE, GROUPING SETS / ROLLUP / CUBE.
 //
@@ -180,26 +189,25 @@ type Clause interface {
 	BuildSQL(args []any) (string, []any)
 }
 
-// A type implementing inner gains parentheses when embedded inside another
-// fragment. Statement is the only implementor. At the top level (ToSQL),
-// BuildSQL is called directly, so no parentheses appear.
-//
-// The branch rides on the type, not on the position.
-type inner interface {
-	innerSQL(args []any) (string, []any)
-}
-
 // value is the only branch in this package. A Clause is expanded as SQL;
 // anything else is bound and becomes a $N.
 //
+// group says whether the enclosing sequence is space-separated. A Statement
+// nested there is an operand, so it is parenthesised. An item of a
+// comma-separated clause is a single expression, which SQL never parenthesises.
+//
 // Every entry point runs through here, except the four functions that demand
 // identifiers (INSERT_INTO / ON_CONFLICT / SET / EXCLUDED).
-func value(args []any, v any) (string, []any) {
+func value(args []any, v any, group bool) (string, []any) {
 	switch c := v.(type) {
 	case nil:
 		return "", args
-	case inner:
-		return c.innerSQL(args)
+	case Statement:
+		sql, args := c.BuildSQL(args)
+		if sql == "" || !group {
+			return sql, args
+		}
+		return "(" + sql + ")", args
 	case Clause:
 		return c.BuildSQL(args)
 	}
@@ -207,11 +215,13 @@ func value(args []any, v any) (string, []any) {
 	return fmt.Sprintf("$%d", len(args)), args
 }
 
+// join concatenates with sep. sep is always comma or space, and it is what
+// tells value() whether a nested Statement is an operand.
 func join(args []any, sep string, vs []any) (string, []any) {
 	parts := make([]string, 0, len(vs))
 	var s string
 	for _, v := range vs {
-		s, args = value(args, v)
+		s, args = value(args, v, sep == space)
 		if s != "" {
 			parts = append(parts, s)
 		}
@@ -237,48 +247,29 @@ func (f clauseFunc) BuildSQL(args []any) (string, []any) {
 }
 
 // ---------------------------------------------------------------------------
-// Stm / Frag — space-separated concatenation
+// Stm — space-separated concatenation
 // ---------------------------------------------------------------------------
 
 // Statement is a space-separated sequence of tokens.
 type Statement struct{ items []any }
 
-// Stm builds a space-separated group. Nesting it adds parentheses.
+// Stm builds a space-separated group. It is the only way to write a statement.
+// Nesting it inside another space-separated sequence adds parentheses; nesting
+// it as an item of a comma-separated clause does not.
 //
-//	Stm(a, b)         -> "a b"
-//	Stm(a, Stm(b, c)) -> "a (b c)"
+//	Stm(a, Stm(b, c))            -> "a (b c)"
+//	ORDER_BY(Stm(UsersID, DESC)) -> "ORDER BY users.id DESC"
 //
-// Subqueries and grouped conditions are spelled the same way.
+// Subqueries, grouped conditions and multi-token items of a comma-separated
+// clause are all spelled the same way.
 func Stm(items ...any) Statement { return Statement{items: dup(items)} }
 
 func (s Statement) BuildSQL(args []any) (string, []any) {
-	return join(args, " ", s.items)
-}
-
-func (s Statement) innerSQL(args []any) (string, []any) {
-	sql, args := s.BuildSQL(args)
-	if sql == "" {
-		return "", args
-	}
-	return "(" + sql + ")", args
+	return join(args, space, s.items)
 }
 
 // ToSQL assembles the whole statement. No parentheses wrap the outermost level.
 func (s Statement) ToSQL() (string, []any) { return s.BuildSQL(nil) }
-
-// Frag is space-separated too, but nesting it adds no parentheses. It is the
-// entry point for "several tokens that carry no parentheses". Use it also when
-// one item of a comma-separated clause (SELECT / ORDER BY) spans several
-// tokens.
-//
-//	ORDER_BY(Frag(UsersID, DESC), Frag(UsersName, ASC, NULLS_LAST))
-//	SELECT(Frag(FUNC("COUNT", STAR), AS("n")))
-func Frag(items ...any) Clause {
-	cp := dup(items)
-	return clauseFunc(func(args []any) (string, []any) {
-		return join(args, " ", cp)
-	})
-}
 
 // ---------------------------------------------------------------------------
 // Basic types
@@ -320,7 +311,7 @@ func Lit(v any) Clause {
 func Row(vs ...any) Clause {
 	cp := dup(vs)
 	return clauseFunc(func(args []any) (string, []any) {
-		sql, args := join(args, ", ", cp)
+		sql, args := join(args, comma, cp)
 		return "(" + sql + ")", args
 	})
 }
@@ -416,7 +407,7 @@ func VALUES(rows ...any) Clause       { return keyword("VALUES", comma, rows) }
 // Keywords that take a single value.
 func valueKeyword(kw string, v any) Clause {
 	return clauseFunc(func(args []any) (string, []any) {
-		s, args := value(args, v)
+		s, args := value(args, v, true)
 		return kw + " " + s, args
 	})
 }
@@ -463,7 +454,7 @@ func AS(alias string) Clause { return Raw("AS " + alias) }
 // DEF defines a CTE.
 func DEF(name string, q any) Clause {
 	return clauseFunc(func(args []any) (string, []any) {
-		s, args := value(args, q)
+		s, args := value(args, q, true)
 		return name + " AS " + s, args
 	})
 }
@@ -530,19 +521,6 @@ const (
 	OrdersCreated = Id("orders.created_at")
 )
 
-// all is a folding helper. It belongs on the caller's side, not in the
-// package. Because it returns a Stm, parentheses appear as soon as it nests.
-func all(cs []any) Clause {
-	out := make([]any, 0, len(cs)*2)
-	for i, c := range cs {
-		if i > 0 {
-			out = append(out, AND)
-		}
-		out = append(out, c)
-	}
-	return Stm(out...)
-}
-
 type filter struct {
 	Status string
 	Cursor int
@@ -584,13 +562,13 @@ func basic() Statement {
 }
 
 // When one item of a comma-separated clause spans several tokens, wrap it in
-// Frag.
+// Stm. As an item of a comma-separated clause it carries no parentheses.
 func keyset() Statement {
 	return Stm(
 		SELECT(UsersID),
 		FROM(Users),
 		WHERE(Row(UsersCreated, UsersID), LT, Row("2025-06-01", 500)),
-		ORDER_BY(Frag(UsersCreated, DESC), Frag(UsersID, DESC, NULLS_LAST)),
+		ORDER_BY(Stm(UsersCreated, DESC), Stm(UsersID, DESC, NULLS_LAST)),
 		LIMIT(20),
 	)
 }
@@ -621,13 +599,13 @@ func operators() Statement {
 func distinctOnAndFilter() Statement {
 	return Stm(
 		SELECT(
-			Frag(DISTINCT_ON(UsersID), UsersID),
+			Stm(DISTINCT_ON(UsersID), UsersID),
 			UsersName,
-			Frag(FUNC("COUNT", STAR), FILTER, Stm(WHERE(UsersIsPaid)), AS("paid_count")),
+			Stm(FUNC("COUNT", STAR), FILTER, Stm(WHERE(UsersIsPaid)), AS("paid_count")),
 		),
 		FROM(Users),
 		GROUP_BY(UsersID, UsersName),
-		ORDER_BY(UsersID, Frag(UsersCreated, DESC)),
+		ORDER_BY(UsersID, Stm(UsersCreated, DESC)),
 	)
 }
 
@@ -635,7 +613,7 @@ func caseExpr() Statement {
 	return Stm(
 		SELECT(
 			UsersID,
-			Frag(CASE,
+			Stm(CASE,
 				WHEN(UsersAge, GTE, 18), THEN("adult"),
 				WHEN(UsersAge, GTE, 13), THEN("teen"),
 				ELSE("child"),
@@ -671,7 +649,7 @@ func window() Statement {
 	return Stm(
 		SELECT(
 			UsersName,
-			Frag(
+			Stm(
 				FUNC("SUM", OrdersTotal), OVER, Stm(
 					PARTITION_BY(OrdersUserID),
 					ORDER_BY(OrdersCreated),
@@ -691,7 +669,7 @@ func lateral() Statement {
 		SELECT(OrdersID, OrdersTotal),
 		FROM(Orders),
 		WHERE(OrdersUserID, EQ, UsersID),
-		ORDER_BY(Frag(OrdersTotal, DESC)),
+		ORDER_BY(Stm(OrdersTotal, DESC)),
 		LIMIT(3),
 	)
 	return Stm(
@@ -701,19 +679,22 @@ func lateral() Statement {
 	)
 }
 
+// The two branches of the union are one flat token sequence, so neither is
+// parenthesised. DEF supplies the parentheses the CTE body always has.
 func recursiveCTE() Statement {
-	seed := Frag(
+	body := Stm(
 		SELECT(UsersID, UsersParentID),
 		FROM(Users),
 		WHERE(UsersID, EQ, 1),
-	)
-	step := Frag(
+
+		UNION_ALL,
+
 		SELECT(UsersID, UsersParentID),
 		FROM(Users),
 		JOIN, Id("tree"), ON(UsersParentID, EQ, Id("tree.id")),
 	)
 	return Stm(
-		WITH_RECURSIVE(DEF("tree", Stm(seed, UNION_ALL, step))),
+		WITH_RECURSIVE(DEF("tree", body)),
 		SELECT(STAR),
 		FROM(Id("tree")),
 	)
@@ -732,7 +713,7 @@ func nested() Statement {
 	)
 	return Stm(
 		SELECT(FUNC("COUNT", STAR)),
-		FROM(Frag(middle, AS("x"))),
+		FROM(Stm(middle, AS("x"))),
 		WHERE(Id("x.id"), LT, 1000),
 	)
 }
@@ -751,21 +732,28 @@ func inExistsNot() Statement {
 }
 
 // Adding a clause and adding a condition are both written with the same append.
+// Conditions are spliced in as tokens rather than wrapped, so no parentheses
+// appear around them. Wrap them in Stm where a group is needed.
 func dynamic(f filter) Statement {
 	var conds []any
+	add := func(tokens ...any) {
+		if len(conds) > 0 {
+			conds = append(conds, AND)
+		}
+		conds = append(conds, tokens...)
+	}
 	if f.Status != "" {
-		conds = append(conds, Frag(UsersStatus, EQ, f.Status))
+		add(UsersStatus, EQ, f.Status)
 	}
 	if f.Cursor > 0 {
-		conds = append(conds, Frag(UsersID, GT, f.Cursor))
+		add(UsersID, GT, f.Cursor)
 	}
 
 	parts := []any{SELECT(UsersID), FROM(Users)}
 	if len(conds) > 0 {
-		parts = append(parts, WHERE(all(conds)))
+		parts = append(parts, WHERE(conds...))
 	}
 	parts = append(parts, ORDER_BY(UsersID), LIMIT(20))
 
 	return Stm(parts...)
 }
-
