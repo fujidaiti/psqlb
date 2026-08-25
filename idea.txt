@@ -71,8 +71,8 @@
 //	Shape in SQL          Shape in Go              Example
 //	--------------------  -----------------------  ------------------------------
 //	Keyword with operands Function                 SELECT(...) FROM(...) LIMIT(20)
-//	Keyword without       Kw constant              AND OR NOT DESC JOIN UNION_ALL
-//	Infix operator        Kw constant / OP()       EQ GT LIKE / OP("@>")
+//	Keyword without       Raw constant             AND OR NOT DESC JOIN UNION_ALL
+//	Infix operator        Raw constant / Raw()     EQ GT LIKE / Raw("@>")
 //	Enclosing             Stm(...) Row(...) FUNC()
 //	Identifier            Id constant              UsersID
 //	Literal               A plain Go value         42, "active"
@@ -145,8 +145,6 @@
 //     it leads directly to SQL injection. Pass only constants, or strings
 //     assembled in code.
 //   - Aliasing a table requires declaring a separate constant such as `t.id`.
-//   - Kw and Raw have identical BuildSQL implementations. The distinction
-//     exists only to mark the latter as dangerous.
 //   - Frag shows up fairly often. Space-separated clauses stay flat, but a
 //     comma-separated clause whose item spans several tokens costs one level
 //     of nesting.
@@ -292,24 +290,20 @@ type Id string
 
 func (i Id) BuildSQL(args []any) (string, []any) { return string(i), args }
 
-// Kw covers keywords and operator symbols. It can be declared as a constant,
-// and its zero value is the empty string, which is skipped during joining.
-type Kw string
-
-func (k Kw) BuildSQL(args []any) (string, []any) { return string(k), args }
-
-// OP turns an infix operator that is not in the fixed list into a Kw:
-// JSONB's @>, the array &&, the regex ~, full-text search's @@, and so on.
-func OP(symbol string) Kw { return Kw(symbol) }
-
-// Raw performs no escaping at all. Pass only constants, or strings assembled
+// Raw is a string embedded into the output as-is. Keywords, operator symbols
+// and arbitrary SQL fragments are all spelled with it: the fixed keyword
+// constants below, and Raw("@>") for an infix operator that is not among them.
+// It can be declared as a constant, and its zero value is the empty string,
+// which is skipped during joining.
+//
+// No escaping is performed at all. Pass only constants, or strings assembled
 // in code.
 type Raw string
 
 func (r Raw) BuildSQL(args []any) (string, []any) { return string(r), args }
 
 // Lit forces a value to be bound. It is needed only when you want to pass an
-// Id or a Kw as a value rather than as an identifier. An ordinary value
+// Id or a Raw as a value rather than as an identifier. An ordinary value
 // becomes a $N just by being written as-is.
 func Lit(v any) Clause {
 	return clauseFunc(func(args []any) (string, []any) {
@@ -336,53 +330,53 @@ func Row(vs ...any) Clause {
 // ---------------------------------------------------------------------------
 
 const (
-	AND Kw = "AND"
-	OR  Kw = "OR"
-	NOT Kw = "NOT"
+	AND Raw = "AND"
+	OR  Raw = "OR"
+	NOT Raw = "NOT"
 
-	EQ    Kw = "="
-	NE    Kw = "<>"
-	GT    Kw = ">"
-	GTE   Kw = ">="
-	LT    Kw = "<"
-	LTE   Kw = "<="
-	LIKE  Kw = "LIKE"
-	ILIKE Kw = "ILIKE"
+	EQ    Raw = "="
+	NE    Raw = "<>"
+	GT    Raw = ">"
+	GTE   Raw = ">="
+	LT    Raw = "<"
+	LTE   Raw = "<="
+	LIKE  Raw = "LIKE"
+	ILIKE Raw = "ILIKE"
 
-	IS_NULL     Kw = "IS NULL"
-	IS_NOT_NULL Kw = "IS NOT NULL"
+	IS_NULL     Raw = "IS NULL"
+	IS_NOT_NULL Raw = "IS NOT NULL"
 
-	ASC         Kw = "ASC"
-	DESC        Kw = "DESC"
-	NULLS_FIRST Kw = "NULLS FIRST"
-	NULLS_LAST  Kw = "NULLS LAST"
+	ASC         Raw = "ASC"
+	DESC        Raw = "DESC"
+	NULLS_FIRST Raw = "NULLS FIRST"
+	NULLS_LAST  Raw = "NULLS LAST"
 
-	JOIN       Kw = "JOIN"
-	LEFT_JOIN  Kw = "LEFT JOIN"
-	INNER_JOIN Kw = "INNER JOIN"
-	CROSS_JOIN Kw = "CROSS JOIN"
-	LATERAL    Kw = "LATERAL"
+	JOIN       Raw = "JOIN"
+	LEFT_JOIN  Raw = "LEFT JOIN"
+	INNER_JOIN Raw = "INNER JOIN"
+	CROSS_JOIN Raw = "CROSS JOIN"
+	LATERAL    Raw = "LATERAL"
 
-	UNION        Kw = "UNION"
-	UNION_ALL    Kw = "UNION ALL"
-	INTERSECT    Kw = "INTERSECT"
-	EXCEPT       Kw = "EXCEPT"
-	MATERIALIZED Kw = "MATERIALIZED"
+	UNION        Raw = "UNION"
+	UNION_ALL    Raw = "UNION ALL"
+	INTERSECT    Raw = "INTERSECT"
+	EXCEPT       Raw = "EXCEPT"
+	MATERIALIZED Raw = "MATERIALIZED"
 
-	DO_UPDATE  Kw = "DO UPDATE"
-	DO_NOTHING Kw = "DO NOTHING"
+	DO_UPDATE  Raw = "DO UPDATE"
+	DO_NOTHING Raw = "DO NOTHING"
 
-	CASE Kw = "CASE"
-	END  Kw = "END"
+	CASE Raw = "CASE"
+	END  Raw = "END"
 
-	OVER   Kw = "OVER"
-	FILTER Kw = "FILTER"
+	OVER   Raw = "OVER"
+	FILTER Raw = "FILTER"
 
-	STAR     Kw = "*"
-	DISTINCT Kw = "DISTINCT"
-	TRUE     Kw = "TRUE"
-	FALSE    Kw = "FALSE"
-	NULL     Kw = "NULL"
+	STAR     Raw = "*"
+	DISTINCT Raw = "DISTINCT"
+	TRUE     Raw = "TRUE"
+	FALSE    Raw = "FALSE"
+	NULL     Raw = "NULL"
 )
 
 // ---------------------------------------------------------------------------
@@ -464,7 +458,7 @@ func FUNC(name string, vs ...any) Clause {
 
 // AS introduces an alias. It takes an identifier, so the parameter is fixed
 // to string.
-func AS(alias string) Clause { return Kw("AS " + alias) }
+func AS(alias string) Clause { return Raw("AS " + alias) }
 
 // DEF defines a CTE.
 func DEF(name string, q any) Clause {
@@ -500,17 +494,17 @@ func unqualifiedList(cols []Id, alwaysParen bool) string {
 }
 
 func INSERT_INTO(table Id, cols ...Id) Clause {
-	return Kw("INSERT INTO " + string(table) + " " + unqualifiedList(cols, true))
+	return Raw("INSERT INTO " + string(table) + " " + unqualifiedList(cols, true))
 }
 
-func ON_CONFLICT(cols ...Id) Clause { return Kw("ON CONFLICT " + unqualifiedList(cols, true)) }
+func ON_CONFLICT(cols ...Id) Clause { return Raw("ON CONFLICT " + unqualifiedList(cols, true)) }
 
-func SET(cols ...Id) Clause { return Kw("SET " + unqualifiedList(cols, false)) }
+func SET(cols ...Id) Clause { return Raw("SET " + unqualifiedList(cols, false)) }
 
-func EXCLUDED(col Id) Clause { return Kw("EXCLUDED." + unqualify(col)) }
+func EXCLUDED(col Id) Clause { return Raw("EXCLUDED." + unqualify(col)) }
 
-func UPDATE(table Id) Clause      { return Kw("UPDATE " + string(table)) }
-func DELETE_FROM(table Id) Clause { return Kw("DELETE FROM " + string(table)) }
+func UPDATE(table Id) Clause      { return Raw("UPDATE " + string(table)) }
+func DELETE_FROM(table Id) Clause { return Raw("DELETE FROM " + string(table)) }
 
 // ===========================================================================
 // Examples — run `go run .` to see the output
@@ -610,15 +604,15 @@ func unionWithLimit() Statement {
 	)
 }
 
-// Operators are written as Kw constants or via OP(). There is no fixed list.
+// Operators are written as Raw constants or via Raw(). There is no fixed list.
 func operators() Statement {
 	return Stm(
 		SELECT(UsersID),
 		FROM(Users),
 		WHERE(
-			UsersMeta, OP("@>"), Raw(`'{"vip": true}'`), AND,
-			UsersName, OP("~"), "^a", AND,
-			UsersStatus, OP("IS DISTINCT FROM"), "banned", AND,
+			UsersMeta, Raw("@>"), Raw(`'{"vip": true}'`), AND,
+			UsersName, Raw("~"), "^a", AND,
+			UsersStatus, Raw("IS DISTINCT FROM"), "banned", AND,
 			UsersEmail, IS_NOT_NULL,
 		),
 	)
