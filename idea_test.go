@@ -107,7 +107,7 @@ func TestUnionWithLimit(t *testing.T) {
 	)
 }
 
-// Operators are written as Raw constants or via Raw(). There is no fixed list.
+// Operators are written as keyword constants or via Raw(). There is no fixed list.
 func TestOperators(t *testing.T) {
 	assertSQL(t,
 		Stm(
@@ -128,6 +128,30 @@ func TestOperators(t *testing.T) {
 			` users.status IS DISTINCT FROM $2 AND`+
 			` users.email IS NOT NULL`,
 		"^a", "banned",
+	)
+}
+
+// Raw takes values as well. Each "$0" in the fragment becomes the next
+// placeholder, so an expression the package does not model keeps its values
+// where they are written instead of being split into separate tokens.
+func TestRawWithValues(t *testing.T) {
+	assertSQL(t,
+		Stm(
+			SELECT(UsersID),
+			FROM(Users),
+			WHERE(
+				Raw("users.meta->'profile'->>'city' = $0", "Tokyo"), AND,
+				Raw("users.meta @> $0::jsonb", `{"vip": true}`), AND,
+				UsersStatus, EQ, "active",
+			),
+		),
+		"SELECT users.id"+
+			" FROM users"+
+			" WHERE"+
+			" users.meta->'profile'->>'city' = $1 AND"+
+			" users.meta @> $2::jsonb AND"+
+			" users.status = $3",
+		"Tokyo", `{"vip": true}`, "active",
 	)
 }
 
@@ -412,4 +436,65 @@ func TestDynamicTwoConditions(t *testing.T) {
 			" LIMIT $3",
 		"active", 100, 20,
 	)
+}
+
+// ===========================================================================
+// Raw — the edges of $0 substitution
+// ===========================================================================
+//
+// These are not examples. They pin down what happens at the boundaries, where
+// the choice was to let the database report the mistake rather than check for
+// it here.
+
+func TestRawTooFewValues(t *testing.T) {
+	// The marker with no value left stays in the output, and Postgres rejects
+	// it with "there is no parameter $0" instead of running the query.
+	assertSQL(t,
+		Stm(WHERE(Raw("a = $0 AND b = $0", 1))),
+		"WHERE a = $1 AND b = $0",
+		1,
+	)
+}
+
+func TestRawSurplusValues(t *testing.T) {
+	// The surplus is bound anyway. The statement then has a parameter nothing
+	// refers to, and Postgres reports the count mismatch when it binds.
+	assertSQL(t,
+		Stm(WHERE(Raw("a = $0", 1, 2))),
+		"WHERE a = $1",
+		1, 2,
+	)
+}
+
+func TestRawDollarWithoutDigits(t *testing.T) {
+	// A "$" with no digits after it is ordinary text, so the delimiters of a
+	// dollar-quoted string pass through untouched.
+	assertSQL(t,
+		Stm(SELECT(Raw("$$it is here$$"), Raw("$tag$so is this$tag$")), FROM(Users)),
+		"SELECT $$it is here$$, $tag$so is this$tag$ FROM users",
+	)
+}
+
+func TestRawPanicsOnOtherPlaceholders(t *testing.T) {
+	// A fragment cannot know its own position, so any number other than 0 is a
+	// mistake. Raw reports it at the call, before it can produce a statement
+	// that runs and reads another clause's value. The last case is the price of
+	// that rule: a literal $1 inside a dollar-quoted body cannot be written,
+	// because Raw cannot tell it from a placeholder.
+	for _, fragment := range []string{
+		"a = $1",
+		"a = $0 AND b = $2",
+		"a = $01",
+		"a = $00",
+		"$$SELECT $1$$",
+	} {
+		t.Run(fragment, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("Raw(%q) did not panic", fragment)
+				}
+			}()
+			Raw(fragment)
+		})
+	}
 }

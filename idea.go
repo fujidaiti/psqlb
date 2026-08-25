@@ -72,8 +72,8 @@
 //	Shape in SQL          Shape in Go              Example
 //	--------------------  -----------------------  ------------------------------
 //	Keyword with operands Function                 SELECT(...) FROM(...) LIMIT(20)
-//	Keyword without       Raw constant             AND OR NOT DESC JOIN UNION_ALL
-//	Infix operator        Raw constant / Raw()     EQ GT LIKE / Raw("@>")
+//	Keyword without       Constant                 AND OR NOT DESC JOIN UNION_ALL
+//	Infix operator        Constant / Raw()         EQ GT LIKE / Raw("@>")
 //	Enclosing             Stm(...) Row(...) FUNC()
 //	Identifier            Id constant              UsersID
 //	Literal               A plain Go value         42, "active"
@@ -144,6 +144,12 @@
 //	UsersStatus, EQ, "active"   // users.status = $1   <- a string, so it is bound
 //	OrdersUserID, EQ, UsersID   // orders.user_id = users.id  <- an Id, so it is inlined
 //
+// Raw joins the same scheme. A fragment written by hand cannot know its own
+// position, so it marks each value with "$0" and receives the real number when
+// it is expanded.
+//
+//	Raw("meta->'profile'->>'city' = $0", "Tokyo")   // = $7, if six values came before
+//
 // Because args is handed along in expansion order, the numbering stays
 // sequential no matter how deeply things nest. Statements are values, so they
 // can be assembled without holding a binder and composed later.
@@ -152,9 +158,13 @@
 // Known limitations
 // ---------------------------------------------------------------------------
 //
-//   - Raw(sql string) performs no escaping whatsoever, so passing user input to
-//     it leads directly to SQL injection. Pass only constants, or strings
-//     assembled in code.
+//   - Raw performs no escaping whatsoever, so passing user input to it leads
+//     directly to SQL injection. Pass only constants, or strings assembled in
+//     code.
+//   - Raw looks for "$0" without inspecting quoted regions, and rejects a "$"
+//     followed by any other digits wherever it appears. Literal text of that
+//     shape — a "$1" inside a dollar-quoted function body, say — therefore
+//     cannot be written.
 //   - Aliasing a table requires declaring a separate constant such as `t.id`.
 //   - A subquery used as a bare item of a comma-separated clause needs one Stm
 //     around it. Forgetting it produces wrong SQL rather than a compile error.
@@ -165,10 +175,11 @@
 // Verification status
 // ---------------------------------------------------------------------------
 //
-// Builds under Go 1.22 and passes go vet and gofmt. The 15 examples in
+// Builds under Go 1.22 and passes go vet and gofmt. The 16 examples in
 // idea_test.go check the generated SQL and the bound arguments against the
-// strings they are expected to produce; run `go test` to check them. Nothing
-// has yet been run against a real database.
+// strings they are expected to produce, and further tests cover the edges of
+// Raw; run `go test` to check them. Nothing has yet been run against a real
+// database.
 package sql
 
 import (
@@ -283,20 +294,116 @@ type Id string
 
 func (i Id) BuildSQL(args []any) (string, []any) { return string(i), args }
 
-// Raw is a string embedded into the output as-is. Keywords, operator symbols
-// and arbitrary SQL fragments are all spelled with it: the fixed keyword
-// constants below, and Raw("@>") for an infix operator that is not among them.
-// It can be declared as a constant, and its zero value is the empty string,
-// which is skipped during joining.
+// rawSQL is a string embedded into the output verbatim. It exists so that the
+// keyword constants below can be declared with const, and its zero value is
+// the empty string, which is skipped during joining.
+//
+// It is unexported so that Raw is the only way to write a fragment. An exported
+// verbatim type would let a fragment reach the output without its placeholders
+// being checked, and a "$2" written that way would refer to another clause's
+// value in a query that still runs.
+type rawSQL string
+
+func (r rawSQL) BuildSQL(args []any) (string, []any) { return string(r), args }
+
+// Raw is the escape hatch for SQL this package does not model, and the only way
+// to write a fragment by hand. The fragment is embedded as-is, and each "$0" in
+// it is replaced with the placeholder for the next value.
+//
+//	Stm(
+//		SELECT(UsersID),
+//		FROM(Users),
+//		WHERE(
+//			UsersStatus, EQ, "active", AND,
+//			Raw("users.meta->'profile'->>'city' = $0", "Tokyo"),
+//		),
+//	)
+//
+//	// SELECT users.id FROM users
+//	// WHERE users.status = $1 AND users.meta->'profile'->>'city' = $2
+//	// args=[active Tokyo]
+//
+// The "$0" became "$2" because the fragment came second. A fragment cannot know
+// that number in advance, which is why it does not write one. With no values,
+// Raw is just a fragment: Raw("@>") produces "@>".
+//
+// Only "$0" marks a value, and Raw panics on a "$" followed by any other
+// number. Such a number is always a mistake, and one that would otherwise
+// produce a query that runs and quietly reads another clause's value.
+//
+// Raw does not look inside quoted regions, because a fragment is a piece of a
+// statement and may begin or end inside one. The consequence is that a "$"
+// followed by digits cannot appear as literal text anywhere in a fragment.
+// Dollar quoting itself still works, since only a digit after the "$" makes a
+// marker: "$$body$$" and "$tag$body$tag$" pass through untouched.
+//
+// A count mismatch is left to the database rather than checked here. A "$0"
+// with no value left stays in the output, and Postgres reports that there is no
+// parameter $0; a surplus value is bound anyway, and Postgres reports the
+// parameter count mismatch.
 //
 // No escaping is performed at all. Pass only constants, or strings assembled
 // in code.
-type Raw string
+func Raw(sql string, vals ...any) Clause {
+	// Split on "$0" once, here, so that a bad fragment panics at the call
+	// rather than at build time. parts holds the text around the markers, so
+	// there are len(parts)-1 places for a value.
+	var parts []string
+	var buf strings.Builder
+	for rest := sql; ; {
+		i := strings.IndexByte(rest, '$')
+		if i < 0 {
+			buf.WriteString(rest)
+			break
+		}
+		buf.WriteString(rest[:i])
+		rest = rest[i+1:]
+		n := 0
+		for n < len(rest) && '0' <= rest[n] && rest[n] <= '9' {
+			n++
+		}
+		if n == 0 {
+			// A "$" with no digits after it is ordinary text, such as the
+			// delimiter of a dollar-quoted string.
+			buf.WriteByte('$')
+			continue
+		}
+		if rest[:n] != "0" {
+			panic("sql: Raw: fragment contains $" + rest[:n] +
+				", but only $0 marks a value: " + sql)
+		}
+		parts = append(parts, buf.String())
+		buf.Reset()
+		rest = rest[n:]
+	}
+	parts = append(parts, buf.String())
 
-func (r Raw) BuildSQL(args []any) (string, []any) { return string(r), args }
+	cp := dup(vals)
+	return clauseFunc(func(args []any) (string, []any) {
+		var b strings.Builder
+		b.WriteString(parts[0])
+		for i, part := range parts[1:] {
+			if i < len(cp) {
+				args = append(args, cp[i])
+				b.WriteString(fmt.Sprintf("$%d", len(args)))
+			} else {
+				// Fewer values than markers. The marker is left in place, and
+				// Postgres reports that there is no parameter $0.
+				b.WriteString("$0")
+			}
+			b.WriteString(part)
+		}
+		// Bind the surplus, if any, so that the mismatch surfaces at the
+		// database instead of the query running with a value silently dropped.
+		for i := len(parts) - 1; i < len(cp); i++ {
+			args = append(args, cp[i])
+		}
+		return b.String(), args
+	})
+}
 
 // Lit forces a value to be bound. It is needed only when you want to pass an
-// Id or a Raw as a value rather than as an identifier. An ordinary value
+// Id or a keyword constant as a value rather than as an identifier. An ordinary value
 // becomes a $N just by being written as-is.
 func Lit(v any) Clause {
 	return clauseFunc(func(args []any) (string, []any) {
@@ -323,53 +430,53 @@ func Row(vs ...any) Clause {
 // ---------------------------------------------------------------------------
 
 const (
-	AND Raw = "AND"
-	OR  Raw = "OR"
-	NOT Raw = "NOT"
+	AND rawSQL = "AND"
+	OR  rawSQL = "OR"
+	NOT rawSQL = "NOT"
 
-	EQ    Raw = "="
-	NE    Raw = "<>"
-	GT    Raw = ">"
-	GTE   Raw = ">="
-	LT    Raw = "<"
-	LTE   Raw = "<="
-	LIKE  Raw = "LIKE"
-	ILIKE Raw = "ILIKE"
+	EQ    rawSQL = "="
+	NE    rawSQL = "<>"
+	GT    rawSQL = ">"
+	GTE   rawSQL = ">="
+	LT    rawSQL = "<"
+	LTE   rawSQL = "<="
+	LIKE  rawSQL = "LIKE"
+	ILIKE rawSQL = "ILIKE"
 
-	IS_NULL     Raw = "IS NULL"
-	IS_NOT_NULL Raw = "IS NOT NULL"
+	IS_NULL     rawSQL = "IS NULL"
+	IS_NOT_NULL rawSQL = "IS NOT NULL"
 
-	ASC         Raw = "ASC"
-	DESC        Raw = "DESC"
-	NULLS_FIRST Raw = "NULLS FIRST"
-	NULLS_LAST  Raw = "NULLS LAST"
+	ASC         rawSQL = "ASC"
+	DESC        rawSQL = "DESC"
+	NULLS_FIRST rawSQL = "NULLS FIRST"
+	NULLS_LAST  rawSQL = "NULLS LAST"
 
-	JOIN       Raw = "JOIN"
-	LEFT_JOIN  Raw = "LEFT JOIN"
-	INNER_JOIN Raw = "INNER JOIN"
-	CROSS_JOIN Raw = "CROSS JOIN"
-	LATERAL    Raw = "LATERAL"
+	JOIN       rawSQL = "JOIN"
+	LEFT_JOIN  rawSQL = "LEFT JOIN"
+	INNER_JOIN rawSQL = "INNER JOIN"
+	CROSS_JOIN rawSQL = "CROSS JOIN"
+	LATERAL    rawSQL = "LATERAL"
 
-	UNION        Raw = "UNION"
-	UNION_ALL    Raw = "UNION ALL"
-	INTERSECT    Raw = "INTERSECT"
-	EXCEPT       Raw = "EXCEPT"
-	MATERIALIZED Raw = "MATERIALIZED"
+	UNION        rawSQL = "UNION"
+	UNION_ALL    rawSQL = "UNION ALL"
+	INTERSECT    rawSQL = "INTERSECT"
+	EXCEPT       rawSQL = "EXCEPT"
+	MATERIALIZED rawSQL = "MATERIALIZED"
 
-	DO_UPDATE  Raw = "DO UPDATE"
-	DO_NOTHING Raw = "DO NOTHING"
+	DO_UPDATE  rawSQL = "DO UPDATE"
+	DO_NOTHING rawSQL = "DO NOTHING"
 
-	CASE Raw = "CASE"
-	END  Raw = "END"
+	CASE rawSQL = "CASE"
+	END  rawSQL = "END"
 
-	OVER   Raw = "OVER"
-	FILTER Raw = "FILTER"
+	OVER   rawSQL = "OVER"
+	FILTER rawSQL = "FILTER"
 
-	STAR     Raw = "*"
-	DISTINCT Raw = "DISTINCT"
-	TRUE     Raw = "TRUE"
-	FALSE    Raw = "FALSE"
-	NULL     Raw = "NULL"
+	STAR     rawSQL = "*"
+	DISTINCT rawSQL = "DISTINCT"
+	TRUE     rawSQL = "TRUE"
+	FALSE    rawSQL = "FALSE"
+	NULL     rawSQL = "NULL"
 )
 
 // ---------------------------------------------------------------------------
