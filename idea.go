@@ -103,7 +103,7 @@
 //     WITH, VALUES, DISTINCT_ON, FUNC, Row.
 //   - It takes a name or an identifier rather than a Clause, which is what
 //     keeps an expression out of that position: UPDATE, DELETE_FROM,
-//     INSERT_INTO, ON_CONFLICT, SET, EXCLUDED, AS, DEF.
+//     INSERT_INTO, ON_CONFLICT, SET, EXCLUDED.
 //
 // Every other keyword is a constant. A keyword followed by a space-separated
 // sequence is exactly what the enclosing Stm already produces, so WHERE, LIMIT,
@@ -146,9 +146,9 @@
 // comma-separated clause needs one Stm around it, because that is what places
 // it in a space-separated sequence.
 //
-//	SELECT(Stm(sub))          // SELECT (SELECT ...)
-//	SELECT(Stm(sub, AS("n"))) // SELECT (SELECT ...) AS n
-//	SELECT(sub)               // SELECT SELECT ...  <- wrong
+//	SELECT(Stm(sub))              // SELECT (SELECT ...)
+//	SELECT(Stm(sub, AS, Id("n"))) // SELECT (SELECT ...) AS n
+//	SELECT(sub)                   // SELECT SELECT ...  <- wrong
 //
 // With an alias, which is the usual case, it costs nothing extra.
 //
@@ -547,6 +547,14 @@ const (
 	ELSE rawSQL = "ELSE"
 	END  rawSQL = "END"
 
+	// AS introduces an alias, and it is also how a CTE is named. The Stm is
+	// what puts the body in a space-separated sequence, which is what gives it
+	// the parentheses SQL requires there.
+	//
+	//	Stm(sub, AS, Id("n"))           -> "(SELECT ...) AS n"
+	//	WITH(Stm(Id("tree"), AS, body)) -> "WITH tree AS (SELECT ...)"
+	AS rawSQL = "AS"
+
 	OVER   rawSQL = "OVER"
 	FILTER rawSQL = "FILTER"
 
@@ -606,18 +614,6 @@ func FUNC(name string, vs ...Clause) Clause {
 	return clauseFunc(func(args []any) (string, []any) {
 		s, args := join(args, comma, cp)
 		return name + "(" + s + ")", args
-	})
-}
-
-// AS introduces an alias. It takes an identifier, so the parameter is fixed
-// to string.
-func AS(alias string) Clause { return Raw("AS " + alias) }
-
-// DEF defines a CTE.
-func DEF(name string, q Clause) Clause {
-	return clauseFunc(func(args []any) (string, []any) {
-		s, args := value(args, q, true)
-		return name + " AS " + s, args
 	})
 }
 

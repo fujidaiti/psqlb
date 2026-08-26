@@ -158,7 +158,7 @@ func TestDistinctOnAndFilter(t *testing.T) {
 			SELECT(
 				Stm(DISTINCT_ON(UsersID), UsersID),
 				UsersName,
-				Stm(FUNC("COUNT", STAR), FILTER, Stm(WHERE, UsersIsPaid), AS("paid_count")),
+				Stm(FUNC("COUNT", STAR), FILTER, Stm(WHERE, UsersIsPaid), AS, Id("paid_count")),
 			),
 			FROM(Users),
 			GROUP_BY(UsersID, UsersName),
@@ -183,7 +183,7 @@ func TestCaseExpr(t *testing.T) {
 					WHEN, UsersAge, GTE, Lit(18), THEN, Lit("adult"),
 					WHEN, UsersAge, GTE, Lit(13), THEN, Lit("teen"),
 					ELSE, Lit("child"),
-					END, AS("bucket"),
+					END, AS, Id("bucket"),
 				),
 			),
 			FROM(Users),
@@ -248,7 +248,7 @@ func TestWindow(t *testing.T) {
 						ORDER_BY(OrdersCreated),
 						Raw("ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"),
 					),
-					AS("running_total"),
+					AS, Id("running_total"),
 				),
 			),
 			FROM(Orders),
@@ -278,7 +278,7 @@ func TestLateral(t *testing.T) {
 		Stm(
 			SELECT(UsersName, Id("t.total")),
 			FROM(Users),
-			JOIN, LATERAL, perUser, AS("t"), ON, TRUE,
+			JOIN, LATERAL, perUser, AS, Id("t"), ON, TRUE,
 		),
 		"SELECT users.name, t.total"+
 			" FROM users"+
@@ -309,7 +309,7 @@ func TestRecursiveCTE(t *testing.T) {
 	)
 	assertSQL(t,
 		Stm(
-			WITH_RECURSIVE(DEF("tree", body)),
+			WITH_RECURSIVE(Stm(Id("tree"), AS, body)),
 			SELECT(STAR),
 			FROM(Id("tree")),
 		),
@@ -342,7 +342,7 @@ func TestNested(t *testing.T) {
 	assertSQL(t,
 		Stm(
 			SELECT(FUNC("COUNT", STAR)),
-			FROM(Stm(middle, AS("x"))),
+			FROM(Stm(middle, AS, Id("x"))),
 			WHERE, Id("x.id"), LT, Lit(1000),
 		),
 		"SELECT COUNT(*)"+
