@@ -24,9 +24,9 @@
 //	sql, args := Stm(
 //		SELECT(UsersID, UsersName),
 //		FROM(Users),
-//		WHERE(UsersStatus, EQ, Lit("active"), AND, UsersAge, GTE, Lit(18)),
+//		WHERE, UsersStatus, EQ, Lit("active"), AND, UsersAge, GTE, Lit(18),
 //		ORDER_BY(Stm(UsersID, DESC)),
-//		LIMIT(Lit(20)),
+//		LIMIT, Lit(20),
 //	).ToSQL()
 //
 //	// SELECT users.id, users.name FROM users
@@ -57,7 +57,8 @@
 //   - Type safety — `WHERE users.name = 49` is not rejected statically. Doing
 //     that with Go's type system, without code generation, is impractical.
 //   - Syntactic correctness — a sequence like `SELECT(...), EQ, EQ` is
-//     perfectly writable. Arity is not checked either. This is not a SQL parser.
+//     perfectly writable, and so is a keyword constant with nothing after it,
+//     such as a bare LIMIT. Arity is not checked. This is not a SQL parser.
 //   - Sugar — no conveniences that do not exist in SQL. The goal is to write
 //     SQL in Go, not to write SQL more briefly.
 //
@@ -71,8 +72,8 @@
 //
 //	Shape in SQL          Shape in Go              Example
 //	--------------------  -----------------------  ------------------------------
-//	Keyword with operands Function                 SELECT(...) FROM(...) LIMIT(...)
-//	Keyword without       Constant                 AND OR NOT DESC JOIN UNION_ALL
+//	Comma-separated list  Function                 SELECT(...) ORDER_BY(...) VALUES(...)
+//	Any other keyword     Constant                 WHERE LIMIT IN AND DESC JOIN
 //	Infix operator        Constant / Raw()         EQ GT LIKE / Raw("@>")
 //	Enclosing             Stm(...) Row(...) FUNC()
 //	Identifier            Id constant              UsersID
@@ -91,6 +92,30 @@
 //	)
 //
 // ---------------------------------------------------------------------------
+// When a keyword is a constant and when it is a function
+// ---------------------------------------------------------------------------
+//
+// One rule decides it, so there is no list to remember. A keyword is a function
+// only when it does something to its operands, which happens in two cases:
+//
+//   - It joins them with commas, or wraps them in parentheses that SQL always
+//     requires: SELECT, FROM, GROUP_BY, ORDER_BY, RETURNING, PARTITION_BY,
+//     WITH, VALUES, DISTINCT_ON, FUNC, Row.
+//   - It takes a name or an identifier rather than a Clause, which is what
+//     keeps an expression out of that position: UPDATE, DELETE_FROM,
+//     INSERT_INTO, ON_CONFLICT, SET, EXCLUDED, AS, DEF.
+//
+// Every other keyword is a constant. A keyword followed by a space-separated
+// sequence is exactly what the enclosing Stm already produces, so WHERE, LIMIT,
+// IN and WHEN would render identically as functions.
+//
+//	Stm(SELECT(UsersID), FROM(Users), WHERE, UsersAge, GTE, Lit(18), LIMIT, Lit(20))
+//
+// So parentheses in the Go code mean the keyword is doing something to what
+// follows it. Where there are none, the tokens simply follow one another, as
+// they do in SQL.
+//
+// ---------------------------------------------------------------------------
 // How parentheses are handled
 // ---------------------------------------------------------------------------
 //
@@ -99,7 +124,7 @@
 //
 // Parentheses with no shorthand form — COUNT(x), IN (...), VALUES (...),
 // DISTINCT ON (...) — map directly onto the parentheses of the Go call:
-// FUNC / Row / IN / DISTINCT_ON.
+// FUNC / Row / VALUES / DISTINCT_ON.
 //
 // Parentheses that may or may not be present — grouping, FROM (SELECT ...) —
 // are written with Stm, and whether they appear depends on where the Stm sits.
@@ -108,8 +133,8 @@
 // expression, and SQL never puts parentheses around one, so a nested Stm is not
 // parenthesised there.
 //
-//	WHERE(Stm(a, OR, b), AND, c)                      // WHERE (a OR b) AND c
-//	WHERE(a, OR, b, AND, c)                           // WHERE a OR b AND c
+//	WHERE, Stm(a, OR, b), AND, c                      // WHERE (a OR b) AND c
+//	WHERE, a, OR, b, AND, c                           // WHERE a OR b AND c
 //	ORDER_BY(Stm(UsersID, DESC), Stm(UsersName, ASC)) // ORDER BY users.id DESC, users.name ASC
 //
 // By SQL's precedence rules the second means a OR (b AND c). That is intended.
@@ -343,10 +368,8 @@ func (r rawSQL) BuildSQL(args []any) (string, []any) { return string(r), args }
 //	Stm(
 //		SELECT(UsersID),
 //		FROM(Users),
-//		WHERE(
-//			UsersStatus, EQ, Lit("active"), AND,
-//			Raw("users.meta->'profile'->>'city' = $0", "Tokyo"),
-//		),
+//		WHERE, UsersStatus, EQ, Lit("active"), AND,
+//		Raw("users.meta->'profile'->>'city' = $0", "Tokyo"),
 //	)
 //
 //	// SELECT users.id FROM users
@@ -437,7 +460,7 @@ func Raw(sql string, vals ...any) Clause {
 // value is not one.
 //
 //	Stm(UPDATE(Users), SET(UsersStatus), EQ, Lit("vip")) // UPDATE users SET status = $1
-//	WHERE(UsersAge, GTE, Lit(18))                        // WHERE users.age >= $1
+//	Stm(WHERE, UsersAge, GTE, Lit(18))                   // WHERE users.age >= $1
 //
 // The values Raw binds to its "$0" markers are the exception. They are written
 // as-is, because a "$0" slot can hold nothing but a value.
@@ -462,10 +485,16 @@ func Row(vs ...Clause) Clause {
 }
 
 // ---------------------------------------------------------------------------
-// Keyword constants — the ones that take no operands
+// Keyword constants — everything a space alone separates from what follows
 // ---------------------------------------------------------------------------
 
 const (
+	WHERE  rawSQL = "WHERE"
+	HAVING rawSQL = "HAVING"
+	ON     rawSQL = "ON"
+	LIMIT  rawSQL = "LIMIT"
+	OFFSET rawSQL = "OFFSET"
+
 	AND rawSQL = "AND"
 	OR  rawSQL = "OR"
 	NOT rawSQL = "NOT"
@@ -478,6 +507,16 @@ const (
 	LTE   rawSQL = "<="
 	LIKE  rawSQL = "LIKE"
 	ILIKE rawSQL = "ILIKE"
+	CAST  rawSQL = "::"
+
+	// IN / EXISTS / ANY take whatever parentheses their operand already
+	// carries. Write Row for a list, or Stm for a subquery.
+	//
+	//	IN, Row(Lit(1), Lit(2)) -> "IN ($1, $2)"
+	//	IN, Stm(SELECT(...))    -> "IN (SELECT ...)"
+	IN     rawSQL = "IN"
+	EXISTS rawSQL = "EXISTS"
+	ANY    rawSQL = "ANY"
 
 	IS_NULL     rawSQL = "IS NULL"
 	IS_NOT_NULL rawSQL = "IS NOT NULL"
@@ -503,6 +542,9 @@ const (
 	DO_NOTHING rawSQL = "DO NOTHING"
 
 	CASE rawSQL = "CASE"
+	WHEN rawSQL = "WHEN"
+	THEN rawSQL = "THEN"
+	ELSE rawSQL = "ELSE"
 	END  rawSQL = "END"
 
 	OVER   rawSQL = "OVER"
@@ -516,13 +558,15 @@ const (
 )
 
 // ---------------------------------------------------------------------------
-// Keyword functions — the ones that take operands
+// Keyword functions — the ones that render their operands themselves
 // ---------------------------------------------------------------------------
 
-func keyword(kw, sep string, vs []Clause) Clause {
+// Every keyword function joins its operands with commas. A keyword whose
+// operands are merely space-separated needs no function; it is a constant.
+func keyword(kw string, vs []Clause) Clause {
 	cp := dup(vs)
 	return clauseFunc(func(args []any) (string, []any) {
-		s, args := join(args, sep, cp)
+		s, args := join(args, comma, cp)
 		if s == "" {
 			return kw, args
 		}
@@ -535,42 +579,15 @@ const (
 	space = " "
 )
 
-func SELECT(vs ...Clause) Clause         { return keyword("SELECT", comma, vs) }
-func FROM(vs ...Clause) Clause           { return keyword("FROM", comma, vs) }
-func WHERE(vs ...Clause) Clause          { return keyword("WHERE", space, vs) }
-func GROUP_BY(vs ...Clause) Clause       { return keyword("GROUP BY", comma, vs) }
-func HAVING(vs ...Clause) Clause         { return keyword("HAVING", space, vs) }
-func ORDER_BY(vs ...Clause) Clause       { return keyword("ORDER BY", comma, vs) }
-func ON(vs ...Clause) Clause             { return keyword("ON", space, vs) }
-func RETURNING(vs ...Clause) Clause      { return keyword("RETURNING", comma, vs) }
-func PARTITION_BY(vs ...Clause) Clause   { return keyword("PARTITION BY", comma, vs) }
-func WITH(vs ...Clause) Clause           { return keyword("WITH", comma, vs) }
-func WITH_RECURSIVE(vs ...Clause) Clause { return keyword("WITH RECURSIVE", comma, vs) }
-func WHEN(vs ...Clause) Clause           { return keyword("WHEN", space, vs) }
-func VALUES(rows ...Clause) Clause       { return keyword("VALUES", comma, rows) }
-
-// Keywords that take a single value.
-func valueKeyword(kw string, v Clause) Clause {
-	return clauseFunc(func(args []any) (string, []any) {
-		s, args := value(args, v, true)
-		return kw + " " + s, args
-	})
-}
-
-func LIMIT(v Clause) Clause  { return valueKeyword("LIMIT", v) }
-func OFFSET(v Clause) Clause { return valueKeyword("OFFSET", v) }
-func THEN(v Clause) Clause   { return valueKeyword("THEN", v) }
-func ELSE(v Clause) Clause   { return valueKeyword("ELSE", v) }
-
-// IN / EXISTS / ANY reuse whatever parentheses their operand already carries.
-// Pass Row(...) for a list, or Stm(...) for a subquery.
-//
-//	IN(Row(Lit(1), Lit(2))) -> "IN ($1, $2)"
-//	IN(Stm(SELECT(...)))    -> "IN (SELECT ...)"
-func IN(v Clause) Clause     { return valueKeyword("IN", v) }
-func EXISTS(v Clause) Clause { return valueKeyword("EXISTS", v) }
-func ANY(v Clause) Clause    { return valueKeyword("ANY", v) }
-func CAST(v Clause) Clause   { return valueKeyword("::", v) }
+func SELECT(vs ...Clause) Clause         { return keyword("SELECT", vs) }
+func FROM(vs ...Clause) Clause           { return keyword("FROM", vs) }
+func GROUP_BY(vs ...Clause) Clause       { return keyword("GROUP BY", vs) }
+func ORDER_BY(vs ...Clause) Clause       { return keyword("ORDER BY", vs) }
+func RETURNING(vs ...Clause) Clause      { return keyword("RETURNING", vs) }
+func PARTITION_BY(vs ...Clause) Clause   { return keyword("PARTITION BY", vs) }
+func WITH(vs ...Clause) Clause           { return keyword("WITH", vs) }
+func WITH_RECURSIVE(vs ...Clause) Clause { return keyword("WITH RECURSIVE", vs) }
+func VALUES(rows ...Clause) Clause       { return keyword("VALUES", rows) }
 
 // Where parentheses are mandatory (no shorthand form exists), the function
 // emits them itself.

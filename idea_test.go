@@ -56,11 +56,10 @@ func TestBasic(t *testing.T) {
 		Stm(
 			SELECT(UsersID, UsersName),
 			FROM(Users),
-			WHERE(
-				UsersID, EQ, Lit(0), AND,
-				UsersName, GT, Lit("name"), AND,
-				Stm(UsersIsPaid, OR, UsersHasTicket),
-			),
+			WHERE,
+			UsersID, EQ, Lit(0), AND,
+			UsersName, GT, Lit("name"), AND,
+			Stm(UsersIsPaid, OR, UsersHasTicket),
 		),
 		"SELECT users.id, users.name"+
 			" FROM users"+
@@ -79,9 +78,9 @@ func TestKeyset(t *testing.T) {
 		Stm(
 			SELECT(UsersID),
 			FROM(Users),
-			WHERE(Row(UsersCreated, UsersID), LT, Row(Lit("2025-06-01"), Lit(500))),
+			WHERE, Row(UsersCreated, UsersID), LT, Row(Lit("2025-06-01"), Lit(500)),
 			ORDER_BY(Stm(UsersCreated, DESC), Stm(UsersID, DESC, NULLS_LAST)),
-			LIMIT(Lit(20)),
+			LIMIT, Lit(20),
 		),
 		"SELECT users.id"+
 			" FROM users"+
@@ -96,9 +95,9 @@ func TestKeyset(t *testing.T) {
 func TestUnionWithLimit(t *testing.T) {
 	assertSQL(t,
 		Stm(
-			Stm(SELECT(UsersID), FROM(Users), ORDER_BY(UsersID), LIMIT(Lit(10))),
+			Stm(SELECT(UsersID), FROM(Users), ORDER_BY(UsersID), LIMIT, Lit(10)),
 			UNION_ALL,
-			Stm(SELECT(OrdersUserID), FROM(Orders), ORDER_BY(OrdersID), LIMIT(Lit(10))),
+			Stm(SELECT(OrdersUserID), FROM(Orders), ORDER_BY(OrdersID), LIMIT, Lit(10)),
 		),
 		"(SELECT users.id FROM users ORDER BY users.id LIMIT $1)"+
 			" UNION ALL"+
@@ -113,12 +112,11 @@ func TestOperators(t *testing.T) {
 		Stm(
 			SELECT(UsersID),
 			FROM(Users),
-			WHERE(
-				UsersMeta, Raw("@>"), Raw(`'{"vip": true}'`), AND,
-				UsersName, Raw("~"), Lit("^a"), AND,
-				UsersStatus, Raw("IS DISTINCT FROM"), Lit("banned"), AND,
-				UsersEmail, IS_NOT_NULL,
-			),
+			WHERE,
+			UsersMeta, Raw("@>"), Raw(`'{"vip": true}'`), AND,
+			UsersName, Raw("~"), Lit("^a"), AND,
+			UsersStatus, Raw("IS DISTINCT FROM"), Lit("banned"), AND,
+			UsersEmail, IS_NOT_NULL,
 		),
 		`SELECT users.id`+
 			` FROM users`+
@@ -139,11 +137,10 @@ func TestRawWithValues(t *testing.T) {
 		Stm(
 			SELECT(UsersID),
 			FROM(Users),
-			WHERE(
-				Raw("users.meta->'profile'->>'city' = $0", "Tokyo"), AND,
-				Raw("users.meta @> $0::jsonb", `{"vip": true}`), AND,
-				UsersStatus, EQ, Lit("active"),
-			),
+			WHERE,
+			Raw("users.meta->'profile'->>'city' = $0", "Tokyo"), AND,
+			Raw("users.meta @> $0::jsonb", `{"vip": true}`), AND,
+			UsersStatus, EQ, Lit("active"),
 		),
 		"SELECT users.id"+
 			" FROM users"+
@@ -161,7 +158,7 @@ func TestDistinctOnAndFilter(t *testing.T) {
 			SELECT(
 				Stm(DISTINCT_ON(UsersID), UsersID),
 				UsersName,
-				Stm(FUNC("COUNT", STAR), FILTER, Stm(WHERE(UsersIsPaid)), AS("paid_count")),
+				Stm(FUNC("COUNT", STAR), FILTER, Stm(WHERE, UsersIsPaid), AS("paid_count")),
 			),
 			FROM(Users),
 			GROUP_BY(UsersID, UsersName),
@@ -183,9 +180,9 @@ func TestCaseExpr(t *testing.T) {
 			SELECT(
 				UsersID,
 				Stm(CASE,
-					WHEN(UsersAge, GTE, Lit(18)), THEN(Lit("adult")),
-					WHEN(UsersAge, GTE, Lit(13)), THEN(Lit("teen")),
-					ELSE(Lit("child")),
+					WHEN, UsersAge, GTE, Lit(18), THEN, Lit("adult"),
+					WHEN, UsersAge, GTE, Lit(13), THEN, Lit("teen"),
+					ELSE, Lit("child"),
 					END, AS("bucket"),
 				),
 			),
@@ -231,7 +228,7 @@ func TestUpdateFrom(t *testing.T) {
 		Stm(
 			UPDATE(Users), SET(UsersStatus), EQ, Lit("vip"),
 			FROM(Orders),
-			WHERE(OrdersUserID, EQ, UsersID, AND, OrdersTotal, GT, Lit(10000)),
+			WHERE, OrdersUserID, EQ, UsersID, AND, OrdersTotal, GT, Lit(10000),
 		),
 		"UPDATE users SET status = $1"+
 			" FROM orders"+
@@ -273,15 +270,15 @@ func TestLateral(t *testing.T) {
 	perUser := Stm(
 		SELECT(OrdersID, OrdersTotal),
 		FROM(Orders),
-		WHERE(OrdersUserID, EQ, UsersID),
+		WHERE, OrdersUserID, EQ, UsersID,
 		ORDER_BY(Stm(OrdersTotal, DESC)),
-		LIMIT(Lit(3)),
+		LIMIT, Lit(3),
 	)
 	assertSQL(t,
 		Stm(
 			SELECT(UsersName, Id("t.total")),
 			FROM(Users),
-			JOIN, LATERAL, perUser, AS("t"), ON(TRUE),
+			JOIN, LATERAL, perUser, AS("t"), ON, TRUE,
 		),
 		"SELECT users.name, t.total"+
 			" FROM users"+
@@ -302,13 +299,13 @@ func TestRecursiveCTE(t *testing.T) {
 	body := Stm(
 		SELECT(UsersID, UsersParentID),
 		FROM(Users),
-		WHERE(UsersID, EQ, Lit(1)),
+		WHERE, UsersID, EQ, Lit(1),
 
 		UNION_ALL,
 
 		SELECT(UsersID, UsersParentID),
 		FROM(Users),
-		JOIN, Id("tree"), ON(UsersParentID, EQ, Id("tree.id")),
+		JOIN, Id("tree"), ON, UsersParentID, EQ, Id("tree.id"),
 	)
 	assertSQL(t,
 		Stm(
@@ -335,18 +332,18 @@ func TestNested(t *testing.T) {
 	inner := Stm(
 		SELECT(OrdersUserID),
 		FROM(Orders),
-		WHERE(OrdersTotal, GT, Lit(100)),
+		WHERE, OrdersTotal, GT, Lit(100),
 	)
 	middle := Stm(
 		SELECT(UsersID),
 		FROM(Users),
-		WHERE(UsersID, IN(inner), AND, UsersAge, GT, Lit(18)),
+		WHERE, UsersID, IN, inner, AND, UsersAge, GT, Lit(18),
 	)
 	assertSQL(t,
 		Stm(
 			SELECT(FUNC("COUNT", STAR)),
 			FROM(Stm(middle, AS("x"))),
-			WHERE(Id("x.id"), LT, Lit(1000)),
+			WHERE, Id("x.id"), LT, Lit(1000),
 		),
 		"SELECT COUNT(*)"+
 			" FROM (SELECT users.id"+
@@ -362,16 +359,15 @@ func TestNested(t *testing.T) {
 }
 
 func TestInExistsNot(t *testing.T) {
-	sub := Stm(SELECT(Lit(1)), FROM(Orders), WHERE(OrdersUserID, EQ, UsersID))
+	sub := Stm(SELECT(Lit(1)), FROM(Orders), WHERE, OrdersUserID, EQ, UsersID)
 	assertSQL(t,
 		Stm(
 			SELECT(UsersID),
 			FROM(Users),
-			WHERE(
-				UsersStatus, IN(Row(Lit("active"), Lit("trial"))), AND,
-				NOT, EXISTS(sub), AND,
-				UsersID, EQ, ANY(Row(Lit(1), Lit(2), Lit(3))),
-			),
+			WHERE,
+			UsersStatus, IN, Row(Lit("active"), Lit("trial")), AND,
+			NOT, EXISTS, sub, AND,
+			UsersID, EQ, ANY, Row(Lit(1), Lit(2), Lit(3)),
 		),
 		"SELECT users.id"+
 			" FROM users"+
@@ -408,9 +404,9 @@ func dynamic(f filter) Statement {
 
 	parts := []Clause{SELECT(UsersID), FROM(Users)}
 	if len(conds) > 0 {
-		parts = append(parts, WHERE(conds...))
+		parts = append(append(parts, WHERE), conds...)
 	}
-	parts = append(parts, ORDER_BY(UsersID), LIMIT(Lit(20)))
+	parts = append(parts, ORDER_BY(UsersID), LIMIT, Lit(20))
 
 	return Stm(parts...)
 }
@@ -450,7 +446,7 @@ func TestRawTooFewValues(t *testing.T) {
 	// The marker with no value left stays in the output, and Postgres rejects
 	// it with "there is no parameter $0" instead of running the query.
 	assertSQL(t,
-		Stm(WHERE(Raw("a = $0 AND b = $0", 1))),
+		Stm(WHERE, Raw("a = $0 AND b = $0", 1)),
 		"WHERE a = $1 AND b = $0",
 		1,
 	)
@@ -460,7 +456,7 @@ func TestRawSurplusValues(t *testing.T) {
 	// The surplus is bound anyway. The statement then has a parameter nothing
 	// refers to, and Postgres reports the count mismatch when it binds.
 	assertSQL(t,
-		Stm(WHERE(Raw("a = $0", 1, 2))),
+		Stm(WHERE, Raw("a = $0", 1, 2)),
 		"WHERE a = $1",
 		1, 2,
 	)
