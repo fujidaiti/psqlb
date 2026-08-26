@@ -24,9 +24,9 @@
 //	sql, args := Stm(
 //		SELECT(UsersID, UsersName),
 //		FROM(Users),
-//		WHERE(UsersStatus, EQ, "active", AND, UsersAge, GTE, 18),
+//		WHERE(UsersStatus, EQ, Lit("active"), AND, UsersAge, GTE, Lit(18)),
 //		ORDER_BY(Stm(UsersID, DESC)),
-//		LIMIT(20),
+//		LIMIT(Lit(20)),
 //	).ToSQL()
 //
 //	// SELECT users.id, users.name FROM users
@@ -71,12 +71,12 @@
 //
 //	Shape in SQL          Shape in Go              Example
 //	--------------------  -----------------------  ------------------------------
-//	Keyword with operands Function                 SELECT(...) FROM(...) LIMIT(20)
+//	Keyword with operands Function                 SELECT(...) FROM(...) LIMIT(...)
 //	Keyword without       Constant                 AND OR NOT DESC JOIN UNION_ALL
 //	Infix operator        Constant / Raw()         EQ GT LIKE / Raw("@>")
 //	Enclosing             Stm(...) Row(...) FUNC()
 //	Identifier            Id constant              UsersID
-//	Literal               A plain Go value         42, "active"
+//	Literal               Lit()                    Lit(42), Lit("active")
 //
 // There are no methods for building expressions. Operators and keywords alike
 // sit in the same flat token sequence. The reasons are that nesting stays
@@ -136,13 +136,13 @@
 //
 // The design in which BuildSQL takes args and returns args is the entirety of
 // the numbering scheme. There is no global counter, and no renumbering pass
-// afterwards. value() is the one and only branch on how a value is treated:
-// if something implements Clause it is expanded as SQL, and if it does not, it
-// becomes a $N. Position has no say in that; it decides only whether a nested
-// Stm is parenthesised.
+// afterwards. Everything written in a statement is a Clause and is expanded as
+// SQL. A value is not written directly; Lit binds it and produces its $N.
+// Position has no say in that; it decides only whether a nested Stm is
+// parenthesised.
 //
-//	UsersStatus, EQ, "active"   // users.status = $1   <- a string, so it is bound
-//	OrdersUserID, EQ, UsersID   // orders.user_id = users.id  <- an Id, so it is inlined
+//	UsersStatus, EQ, Lit("active")  // users.status = $1
+//	OrdersUserID, EQ, UsersID       // orders.user_id = users.id
 //
 // Raw joins the same scheme. A fragment written by hand cannot know its own
 // position, so it marks each value with "$0" and receives the real number when
@@ -153,6 +153,32 @@
 // Because args is handed along in expansion order, the numbering stays
 // sequential no matter how deeply things nest. Statements are values, so they
 // can be assembled without holding a binder and composed later.
+//
+// ---------------------------------------------------------------------------
+// Why every position takes a Clause
+// ---------------------------------------------------------------------------
+//
+// Nothing in the DSL takes `any`. Every operand of Stm, of a keyword function
+// and of Row is a Clause, so a value has to be written as Lit(v). The reason is
+// that `any` cannot distinguish a value from a mistake, and the two mistakes it
+// admits are both silent.
+//
+//	SELECT("id", "name")        // would be SELECT $1, $2, binding "id" and "name"
+//	Stm(SELECT, UsersID)        // would bind the SELECT function itself
+//
+// The first is the worse of the two. An identifier written as a string instead
+// of an Id produces a query that Postgres accepts and runs, comparing two
+// literals rather than a column, so it returns the wrong rows with no error
+// anywhere. Requiring Lit makes both a compile error.
+//
+// The cost is that a value is three characters longer. The benefit is that
+// there is exactly one way to write each of the three things a statement is
+// made of: Id for an identifier, Lit for a value, and a keyword or clause for
+// everything else.
+//
+// Two places still take `any`, and neither is ambiguous, because every argument
+// they receive is a value: Lit itself, and the values Raw binds to its "$0"
+// markers.
 //
 // ---------------------------------------------------------------------------
 // Known limitations
@@ -202,18 +228,18 @@ type Clause interface {
 	BuildSQL(args []any) (string, []any)
 }
 
-// value is the only branch in this package. A Clause is expanded as SQL;
-// anything else is bound and becomes a $N. An untyped nil is the exception: it
-// produces nothing, so that an optional item can be left in place. A typed nil,
-// such as a *string, is an ordinary value and is bound.
+// value is the only branch in this package. Every item is a Clause and is
+// expanded as SQL. A nil item is the exception: it produces nothing, so that an
+// optional item can be left in place.
 //
 // group says whether the enclosing sequence is space-separated. A Statement
 // nested there is an operand, so it is parenthesised. An item of a
 // comma-separated clause is a single expression, which SQL never parenthesises.
 //
-// Every entry point runs through here, except the four functions that demand
-// identifiers (INSERT_INTO / ON_CONFLICT / SET / EXCLUDED).
-func value(args []any, v any, group bool) (string, []any) {
+// Values are not items. They enter only through Lit and Raw, which bind them
+// directly. That is what keeps a forgotten Id, SELECT("id"), and a keyword that
+// was named but not called, Stm(SELECT, UsersID), from compiling.
+func value(args []any, v Clause, group bool) (string, []any) {
 	switch c := v.(type) {
 	case nil:
 		return "", args
@@ -223,16 +249,13 @@ func value(args []any, v any, group bool) (string, []any) {
 			return sql, args
 		}
 		return "(" + sql + ")", args
-	case Clause:
-		return c.BuildSQL(args)
 	}
-	args = append(args, v)
-	return fmt.Sprintf("$%d", len(args)), args
+	return v.BuildSQL(args)
 }
 
 // join concatenates with sep. sep is always comma or space, and it is what
 // tells value() whether a nested Statement is an operand.
-func join(args []any, sep string, vs []any) (string, []any) {
+func join(args []any, sep string, vs []Clause) (string, []any) {
 	parts := make([]string, 0, len(vs))
 	var s string
 	for _, v := range vs {
@@ -244,8 +267,10 @@ func join(args []any, sep string, vs []any) (string, []any) {
 	return strings.Join(parts, sep), args
 }
 
-func dup(vs []any) []any {
-	cp := make([]any, len(vs))
+// dup is generic because Raw holds values, []any, while everything else holds
+// items, []Clause.
+func dup[T any](vs []T) []T {
+	cp := make([]T, len(vs))
 	copy(cp, vs)
 	return cp
 }
@@ -266,7 +291,7 @@ func (f clauseFunc) BuildSQL(args []any) (string, []any) {
 // ---------------------------------------------------------------------------
 
 // Statement is a space-separated sequence of tokens.
-type Statement struct{ items []any }
+type Statement struct{ items []Clause }
 
 // Stm builds a space-separated group. It is the only way to write a statement.
 // Nesting it inside another space-separated sequence adds parentheses; nesting
@@ -277,7 +302,10 @@ type Statement struct{ items []any }
 //
 // Subqueries, grouped conditions and multi-token items of a comma-separated
 // clause are all spelled the same way.
-func Stm(items ...any) Statement { return Statement{items: dup(items)} }
+//
+// Items are Clause, as they are everywhere in the DSL. A plain Go value is not
+// an item; write Lit for that.
+func Stm(items ...Clause) Statement { return Statement{items: dup(items)} }
 
 func (s Statement) BuildSQL(args []any) (string, []any) {
 	return join(args, space, s.items)
@@ -316,7 +344,7 @@ func (r rawSQL) BuildSQL(args []any) (string, []any) { return string(r), args }
 //		SELECT(UsersID),
 //		FROM(Users),
 //		WHERE(
-//			UsersStatus, EQ, "active", AND,
+//			UsersStatus, EQ, Lit("active"), AND,
 //			Raw("users.meta->'profile'->>'city' = $0", "Tokyo"),
 //		),
 //	)
@@ -404,12 +432,28 @@ func Raw(sql string, vals ...any) Clause {
 	})
 }
 
+// Lit binds a value and produces its $N. It is the only way a value enters a
+// statement, since every position in the DSL takes a Clause and a plain Go
+// value is not one.
+//
+//	Stm(UPDATE(Users), SET(UsersStatus), EQ, Lit("vip")) // UPDATE users SET status = $1
+//	WHERE(UsersAge, GTE, Lit(18))                        // WHERE users.age >= $1
+//
+// The values Raw binds to its "$0" markers are the exception. They are written
+// as-is, because a "$0" slot can hold nothing but a value.
+func Lit(v any) Clause {
+	return clauseFunc(func(args []any) (string, []any) {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args)), args
+	})
+}
+
 // Row is a comma-separated parenthesised list. Row values, the list in an IN,
 // and a single row of VALUES are all spelled the same way.
 //
-//	Row("bob", 42)             -> "($1, $2)"
+//	Row(Lit("bob"), Lit(42))   -> "($1, $2)"
 //	Row(UsersCreated, UsersID) -> "(users.created_at, users.id)"
-func Row(vs ...any) Clause {
+func Row(vs ...Clause) Clause {
 	cp := dup(vs)
 	return clauseFunc(func(args []any) (string, []any) {
 		sql, args := join(args, comma, cp)
@@ -475,7 +519,7 @@ const (
 // Keyword functions — the ones that take operands
 // ---------------------------------------------------------------------------
 
-func keyword(kw, sep string, vs []any) Clause {
+func keyword(kw, sep string, vs []Clause) Clause {
 	cp := dup(vs)
 	return clauseFunc(func(args []any) (string, []any) {
 		s, args := join(args, sep, cp)
@@ -491,46 +535,46 @@ const (
 	space = " "
 )
 
-func SELECT(vs ...any) Clause         { return keyword("SELECT", comma, vs) }
-func FROM(vs ...any) Clause           { return keyword("FROM", comma, vs) }
-func WHERE(vs ...any) Clause          { return keyword("WHERE", space, vs) }
-func GROUP_BY(vs ...any) Clause       { return keyword("GROUP BY", comma, vs) }
-func HAVING(vs ...any) Clause         { return keyword("HAVING", space, vs) }
-func ORDER_BY(vs ...any) Clause       { return keyword("ORDER BY", comma, vs) }
-func ON(vs ...any) Clause             { return keyword("ON", space, vs) }
-func RETURNING(vs ...any) Clause      { return keyword("RETURNING", comma, vs) }
-func PARTITION_BY(vs ...any) Clause   { return keyword("PARTITION BY", comma, vs) }
-func WITH(vs ...any) Clause           { return keyword("WITH", comma, vs) }
-func WITH_RECURSIVE(vs ...any) Clause { return keyword("WITH RECURSIVE", comma, vs) }
-func WHEN(vs ...any) Clause           { return keyword("WHEN", space, vs) }
-func VALUES(rows ...any) Clause       { return keyword("VALUES", comma, rows) }
+func SELECT(vs ...Clause) Clause         { return keyword("SELECT", comma, vs) }
+func FROM(vs ...Clause) Clause           { return keyword("FROM", comma, vs) }
+func WHERE(vs ...Clause) Clause          { return keyword("WHERE", space, vs) }
+func GROUP_BY(vs ...Clause) Clause       { return keyword("GROUP BY", comma, vs) }
+func HAVING(vs ...Clause) Clause         { return keyword("HAVING", space, vs) }
+func ORDER_BY(vs ...Clause) Clause       { return keyword("ORDER BY", comma, vs) }
+func ON(vs ...Clause) Clause             { return keyword("ON", space, vs) }
+func RETURNING(vs ...Clause) Clause      { return keyword("RETURNING", comma, vs) }
+func PARTITION_BY(vs ...Clause) Clause   { return keyword("PARTITION BY", comma, vs) }
+func WITH(vs ...Clause) Clause           { return keyword("WITH", comma, vs) }
+func WITH_RECURSIVE(vs ...Clause) Clause { return keyword("WITH RECURSIVE", comma, vs) }
+func WHEN(vs ...Clause) Clause           { return keyword("WHEN", space, vs) }
+func VALUES(rows ...Clause) Clause       { return keyword("VALUES", comma, rows) }
 
 // Keywords that take a single value.
-func valueKeyword(kw string, v any) Clause {
+func valueKeyword(kw string, v Clause) Clause {
 	return clauseFunc(func(args []any) (string, []any) {
 		s, args := value(args, v, true)
 		return kw + " " + s, args
 	})
 }
 
-func LIMIT(v any) Clause  { return valueKeyword("LIMIT", v) }
-func OFFSET(v any) Clause { return valueKeyword("OFFSET", v) }
-func THEN(v any) Clause   { return valueKeyword("THEN", v) }
-func ELSE(v any) Clause   { return valueKeyword("ELSE", v) }
+func LIMIT(v Clause) Clause  { return valueKeyword("LIMIT", v) }
+func OFFSET(v Clause) Clause { return valueKeyword("OFFSET", v) }
+func THEN(v Clause) Clause   { return valueKeyword("THEN", v) }
+func ELSE(v Clause) Clause   { return valueKeyword("ELSE", v) }
 
 // IN / EXISTS / ANY reuse whatever parentheses their operand already carries.
 // Pass Row(...) for a list, or Stm(...) for a subquery.
 //
-//	IN(Row(1, 2, 3))          -> "IN ($1, $2, $3)"
-//	IN(Stm(SELECT(...), ...)) -> "IN (SELECT ...)"
-func IN(v any) Clause     { return valueKeyword("IN", v) }
-func EXISTS(v any) Clause { return valueKeyword("EXISTS", v) }
-func ANY(v any) Clause    { return valueKeyword("ANY", v) }
-func CAST(v any) Clause   { return valueKeyword("::", v) }
+//	IN(Row(Lit(1), Lit(2))) -> "IN ($1, $2)"
+//	IN(Stm(SELECT(...)))    -> "IN (SELECT ...)"
+func IN(v Clause) Clause     { return valueKeyword("IN", v) }
+func EXISTS(v Clause) Clause { return valueKeyword("EXISTS", v) }
+func ANY(v Clause) Clause    { return valueKeyword("ANY", v) }
+func CAST(v Clause) Clause   { return valueKeyword("::", v) }
 
 // Where parentheses are mandatory (no shorthand form exists), the function
 // emits them itself.
-func DISTINCT_ON(vs ...any) Clause {
+func DISTINCT_ON(vs ...Clause) Clause {
 	cp := dup(vs)
 	return clauseFunc(func(args []any) (string, []any) {
 		s, args := join(args, comma, cp)
@@ -540,7 +584,7 @@ func DISTINCT_ON(vs ...any) Clause {
 
 // FUNC covers any SQL function. It is the single entry point that spares us
 // from growing separate COUNT / SUM / COALESCE / PERCENTILE_CONT helpers.
-func FUNC(name string, vs ...any) Clause {
+func FUNC(name string, vs ...Clause) Clause {
 	cp := dup(vs)
 	return clauseFunc(func(args []any) (string, []any) {
 		s, args := join(args, comma, cp)
@@ -553,7 +597,7 @@ func FUNC(name string, vs ...any) Clause {
 func AS(alias string) Clause { return Raw("AS " + alias) }
 
 // DEF defines a CTE.
-func DEF(name string, q any) Clause {
+func DEF(name string, q Clause) Clause {
 	return clauseFunc(func(args []any) (string, []any) {
 		s, args := value(args, q, true)
 		return name + " AS " + s, args

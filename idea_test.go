@@ -57,8 +57,8 @@ func TestBasic(t *testing.T) {
 			SELECT(UsersID, UsersName),
 			FROM(Users),
 			WHERE(
-				UsersID, EQ, 0, AND,
-				UsersName, GT, "name", AND,
+				UsersID, EQ, Lit(0), AND,
+				UsersName, GT, Lit("name"), AND,
 				Stm(UsersIsPaid, OR, UsersHasTicket),
 			),
 		),
@@ -79,9 +79,9 @@ func TestKeyset(t *testing.T) {
 		Stm(
 			SELECT(UsersID),
 			FROM(Users),
-			WHERE(Row(UsersCreated, UsersID), LT, Row("2025-06-01", 500)),
+			WHERE(Row(UsersCreated, UsersID), LT, Row(Lit("2025-06-01"), Lit(500))),
 			ORDER_BY(Stm(UsersCreated, DESC), Stm(UsersID, DESC, NULLS_LAST)),
-			LIMIT(20),
+			LIMIT(Lit(20)),
 		),
 		"SELECT users.id"+
 			" FROM users"+
@@ -96,9 +96,9 @@ func TestKeyset(t *testing.T) {
 func TestUnionWithLimit(t *testing.T) {
 	assertSQL(t,
 		Stm(
-			Stm(SELECT(UsersID), FROM(Users), ORDER_BY(UsersID), LIMIT(10)),
+			Stm(SELECT(UsersID), FROM(Users), ORDER_BY(UsersID), LIMIT(Lit(10))),
 			UNION_ALL,
-			Stm(SELECT(OrdersUserID), FROM(Orders), ORDER_BY(OrdersID), LIMIT(10)),
+			Stm(SELECT(OrdersUserID), FROM(Orders), ORDER_BY(OrdersID), LIMIT(Lit(10))),
 		),
 		"(SELECT users.id FROM users ORDER BY users.id LIMIT $1)"+
 			" UNION ALL"+
@@ -115,8 +115,8 @@ func TestOperators(t *testing.T) {
 			FROM(Users),
 			WHERE(
 				UsersMeta, Raw("@>"), Raw(`'{"vip": true}'`), AND,
-				UsersName, Raw("~"), "^a", AND,
-				UsersStatus, Raw("IS DISTINCT FROM"), "banned", AND,
+				UsersName, Raw("~"), Lit("^a"), AND,
+				UsersStatus, Raw("IS DISTINCT FROM"), Lit("banned"), AND,
 				UsersEmail, IS_NOT_NULL,
 			),
 		),
@@ -142,7 +142,7 @@ func TestRawWithValues(t *testing.T) {
 			WHERE(
 				Raw("users.meta->'profile'->>'city' = $0", "Tokyo"), AND,
 				Raw("users.meta @> $0::jsonb", `{"vip": true}`), AND,
-				UsersStatus, EQ, "active",
+				UsersStatus, EQ, Lit("active"),
 			),
 		),
 		"SELECT users.id"+
@@ -183,9 +183,9 @@ func TestCaseExpr(t *testing.T) {
 			SELECT(
 				UsersID,
 				Stm(CASE,
-					WHEN(UsersAge, GTE, 18), THEN("adult"),
-					WHEN(UsersAge, GTE, 13), THEN("teen"),
-					ELSE("child"),
+					WHEN(UsersAge, GTE, Lit(18)), THEN(Lit("adult")),
+					WHEN(UsersAge, GTE, Lit(13)), THEN(Lit("teen")),
+					ELSE(Lit("child")),
 					END, AS("bucket"),
 				),
 			),
@@ -208,8 +208,8 @@ func TestUpsert(t *testing.T) {
 		Stm(
 			INSERT_INTO(Users, UsersName, UsersEmail),
 			VALUES(
-				Row("bob", "bob@x"),
-				Row("amy", "amy@x"),
+				Row(Lit("bob"), Lit("bob@x")),
+				Row(Lit("amy"), Lit("amy@x")),
 			),
 			ON_CONFLICT(UsersEmail),
 			DO_UPDATE, SET(UsersName), EQ, EXCLUDED(UsersName),
@@ -229,9 +229,9 @@ func TestUpsert(t *testing.T) {
 func TestUpdateFrom(t *testing.T) {
 	assertSQL(t,
 		Stm(
-			UPDATE(Users), SET(UsersStatus), EQ, "vip",
+			UPDATE(Users), SET(UsersStatus), EQ, Lit("vip"),
 			FROM(Orders),
-			WHERE(OrdersUserID, EQ, UsersID, AND, OrdersTotal, GT, 10000),
+			WHERE(OrdersUserID, EQ, UsersID, AND, OrdersTotal, GT, Lit(10000)),
 		),
 		"UPDATE users SET status = $1"+
 			" FROM orders"+
@@ -275,7 +275,7 @@ func TestLateral(t *testing.T) {
 		FROM(Orders),
 		WHERE(OrdersUserID, EQ, UsersID),
 		ORDER_BY(Stm(OrdersTotal, DESC)),
-		LIMIT(3),
+		LIMIT(Lit(3)),
 	)
 	assertSQL(t,
 		Stm(
@@ -302,7 +302,7 @@ func TestRecursiveCTE(t *testing.T) {
 	body := Stm(
 		SELECT(UsersID, UsersParentID),
 		FROM(Users),
-		WHERE(UsersID, EQ, 1),
+		WHERE(UsersID, EQ, Lit(1)),
 
 		UNION_ALL,
 
@@ -335,18 +335,18 @@ func TestNested(t *testing.T) {
 	inner := Stm(
 		SELECT(OrdersUserID),
 		FROM(Orders),
-		WHERE(OrdersTotal, GT, 100),
+		WHERE(OrdersTotal, GT, Lit(100)),
 	)
 	middle := Stm(
 		SELECT(UsersID),
 		FROM(Users),
-		WHERE(UsersID, IN(inner), AND, UsersAge, GT, 18),
+		WHERE(UsersID, IN(inner), AND, UsersAge, GT, Lit(18)),
 	)
 	assertSQL(t,
 		Stm(
 			SELECT(FUNC("COUNT", STAR)),
 			FROM(Stm(middle, AS("x"))),
-			WHERE(Id("x.id"), LT, 1000),
+			WHERE(Id("x.id"), LT, Lit(1000)),
 		),
 		"SELECT COUNT(*)"+
 			" FROM (SELECT users.id"+
@@ -362,15 +362,15 @@ func TestNested(t *testing.T) {
 }
 
 func TestInExistsNot(t *testing.T) {
-	sub := Stm(SELECT(1), FROM(Orders), WHERE(OrdersUserID, EQ, UsersID))
+	sub := Stm(SELECT(Lit(1)), FROM(Orders), WHERE(OrdersUserID, EQ, UsersID))
 	assertSQL(t,
 		Stm(
 			SELECT(UsersID),
 			FROM(Users),
 			WHERE(
-				UsersStatus, IN(Row("active", "trial")), AND,
+				UsersStatus, IN(Row(Lit("active"), Lit("trial"))), AND,
 				NOT, EXISTS(sub), AND,
-				UsersID, EQ, ANY(Row(1, 2, 3)),
+				UsersID, EQ, ANY(Row(Lit(1), Lit(2), Lit(3))),
 			),
 		),
 		"SELECT users.id"+
@@ -392,25 +392,25 @@ type filter struct {
 // Conditions are spliced in as tokens rather than wrapped, so no parentheses
 // appear around them. Wrap them in Stm where a group is needed.
 func dynamic(f filter) Statement {
-	var conds []any
-	add := func(tokens ...any) {
+	var conds []Clause
+	add := func(tokens ...Clause) {
 		if len(conds) > 0 {
 			conds = append(conds, AND)
 		}
 		conds = append(conds, tokens...)
 	}
 	if f.Status != "" {
-		add(UsersStatus, EQ, f.Status)
+		add(UsersStatus, EQ, Lit(f.Status))
 	}
 	if f.Cursor > 0 {
-		add(UsersID, GT, f.Cursor)
+		add(UsersID, GT, Lit(f.Cursor))
 	}
 
-	parts := []any{SELECT(UsersID), FROM(Users)}
+	parts := []Clause{SELECT(UsersID), FROM(Users)}
 	if len(conds) > 0 {
 		parts = append(parts, WHERE(conds...))
 	}
-	parts = append(parts, ORDER_BY(UsersID), LIMIT(20))
+	parts = append(parts, ORDER_BY(UsersID), LIMIT(Lit(20)))
 
 	return Stm(parts...)
 }
