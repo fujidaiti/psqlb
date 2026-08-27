@@ -9,18 +9,18 @@ an ORM and has no runtime dependencies: a statement is built into a SQL string p
 `[]any` of arguments for the `$N` placeholders, and executing it is left to pgx or
 `database/sql`.
 
-The repository holds **two competing designs of the same DSL**, both in a package named
-`sql` (the name is chosen for dot-importing, so every exported identifier is upper-case):
+The DSL is still being explored, so the design is expected to change. Everything lives in a
+single package named `sql` (the name is chosen for dot-importing, so every exported
+identifier is upper-case):
 
-- `./idea.go` + `./idea_test.go` — the original design. Keywords that join their operands
-  with commas are Go functions: `SELECT(a, b)`, `ORDER_BY(...)`.
-- `./flat/sql.go` + `./flat/sql_test.go` + `./flat/walker_test.go` — the newer design. The
-  whole statement is one flat token list and `Stm` works out where the commas go, so those
-  keywords become constants: `Stm(SELECT, a, b, FROM, t)`.
+- `./sql.go` — the implementation and the design document (its package doc comment).
+- `./sql_test.go` — the worked examples.
+- `./walker_test.go` — the mechanical coverage of the walker rules.
 
-`flat` is a port of the root package, not a refactor of it: the root package is left
-untouched, and every example in `idea_test.go` was ported to `flat/sql_test.go`, so the
-two designs can be compared example by example. When changing one design, do not assume the other should follow.
+An earlier design, in which keywords that join their operands with commas were Go functions
+(`SELECT(a, b)`, `ORDER_BY(...)`), has been dropped. The current design writes the whole
+statement as one flat token list and lets `Stm` work out where the commas go, so those
+keywords are constants: `Stm(SELECT, a, b, FROM, t)`.
 
 Nothing here has been run against a real database. The tests compare generated strings and
 bound arguments only.
@@ -28,10 +28,9 @@ bound arguments only.
 ## Commands
 
 ```sh
-go test ./...                                  # both packages
-go test ./flat/                                # one package
-go test ./flat/ -run TestCommaPlacement        # one test
-go test ./flat/ -run 'TestKindsAtEveryPosition/head/prefix'  # one subtest
+go test ./...                                  # the package
+go test ./... -run TestCommaPlacement          # one test
+go test ./... -run 'TestKindsAtEveryPosition/head/prefix'  # one subtest
 go vet ./... && gofmt -l .                     # both must stay clean
 ```
 
@@ -39,7 +38,7 @@ Go 1.27 (see `go.mod`).
 
 ## Architecture
 
-### The shared core (both designs)
+### The core
 
 `Clause` is the single interface. It takes the args bound so far and returns its SQL
 fragment plus those args with whatever it bound appended. Passing args along this chain is
@@ -55,16 +54,7 @@ returning the wrong rows.
 The keyword constants work because their underlying types are `string`, which is what lets
 them be declared with `const`.
 
-### `./idea.go` — parenthesisation by position
-
-`Stm` joins with spaces; keyword functions join with commas. A nested `Statement` is
-parenthesised **only when the enclosing separator is a space**, since SQL never
-parenthesises a single item of a comma-separated clause. That one rule produces both
-`ORDER_BY(Stm(UsersID, DESC))` (no parens) and `WHERE, Stm(a, OR, b)` (parens).
-
-`Raw` **panics** on a malformed fragment; `ToSQL` returns no error.
-
-### `./flat/sql.go` — parenthesisation by nesting, commas by token kind
+### Parenthesisation by nesting, commas by token kind
 
 `Stm` takes the whole statement as one flat token list and a walker decides the separators.
 Every token carries a `kind`, and the kind is its Go type (`operandKw`, `prefixKw`,
@@ -96,26 +86,23 @@ clause's value.
 
 ### When a keyword is a constant and when it is a function
 
-Each design states its own rule in its package doc, and the rule is what keeps the
-vocabulary from becoming a list to memorise. Read the doc comment before adding a keyword.
-
-- `idea.go`: a function only when it shapes its operands — joins them with commas, or takes
-  a bare `Id` rather than a `Clause`.
-- `flat`: a function exactly when SQL always follows it with one parenthesised group
-  (`IN`, `EXISTS`, `ANY`, `OVER`, `FILTER`, `DISTINCT_ON`), or when it takes a bare name
-  (`INSERT_INTO`, `ON_CONFLICT`).
+The rule is stated in the package doc, and it is what keeps the vocabulary from becoming a
+list to memorise. Read the doc comment before adding a keyword: a keyword is a function
+exactly when SQL always follows it with one parenthesised group (`IN`, `EXISTS`, `ANY`,
+`OVER`, `FILTER`, `DISTINCT_ON`), or when it takes a bare name (`INSERT_INTO`,
+`ON_CONFLICT`). Every other keyword is a constant.
 
 ## Conventions
 
-The package doc comments are the design document — they are long by intent and record the
+The package doc comment is the design document — it is long by intent and records the
 rationale, the deliberate omissions (no type safety, no arity checking, no sugar) and the
 known limitations. A change to behaviour is incomplete until the relevant section of the
 doc comment is updated with it.
 
-`idea_test.go` and `flat/sql_test.go` are usage documentation as well as tests: each example
-states the SQL it must produce with the expected string broken into lines matching the Go
-lines above it. `flat/walker_test.go` is the separate mechanical coverage of the walker
-rules. Add examples to the former, rule coverage to the latter.
+`sql_test.go` is usage documentation as well as a test: each example states the SQL it must
+produce with the expected string broken into lines matching the Go lines above it.
+`walker_test.go` is the separate mechanical coverage of the walker rules. Add examples to
+the former, rule coverage to the latter.
 
 Commit messages are lower-case imperative subjects with long prose bodies that explain why
 the design changed, what it costs, and what the tests prove about it. Match that.

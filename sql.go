@@ -26,7 +26,7 @@
 // The DSL is meant to be dot-imported, which is why every exported name is
 // upper-case:
 //
-//	import . "github.com/fujidaiti/psqlb/flat"
+//	import . "github.com/fujidaiti/psqlb"
 //
 // # Token kinds
 //
