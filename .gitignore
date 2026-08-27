@@ -1,0 +1,9 @@
+# Go build and test output
+/psqlb
+*.exe
+*.test
+*.out
+/vendor/
+
+# macOS
+.DS_Store
