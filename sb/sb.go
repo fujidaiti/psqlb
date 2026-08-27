@@ -1,13 +1,13 @@
-// Package sql builds Postgres statements from a flat list of tokens.
+// Package sb builds Postgres statements from a flat list of tokens.
 //
 // A statement is written as one sequence of tokens, in the order the SQL reads:
 //
-//	Stm(
+//	sb.Stm(
 //		SELECT, UsersID, UsersName,
 //		FROM, Users,
-//		WHERE, Row(UsersCreated, UsersID), LT, Row(Lit("2025-06-01"), Lit(500)),
+//		WHERE, sb.Row(UsersCreated, UsersID), LT, sb.Row(sb.Lit("2025-06-01"), sb.Lit(500)),
 //		ORDER_BY, UsersCreated, DESC, UsersID, DESC, NULLS_LAST,
-//		LIMIT, Lit(20),
+//		LIMIT, sb.Lit(20),
 //	)
 //
 //	// SELECT users.id, users.name
@@ -23,10 +23,26 @@
 // rather than starting a new one. Producing that is the whole job of this
 // package, and the next section is how it is done.
 //
-// The DSL is meant to be dot-imported, which is why every exported name is
-// upper-case:
+// # The two packages
 //
-//	import . "github.com/fujidaiti/psqlb"
+// The SQL keywords live in package psqlb and everything else lives here. A
+// user dot-imports the keywords, so that they read as SQL, and reaches this
+// package through its name:
+//
+//	import (
+//		. "github.com/fujidaiti/psqlb"
+//		"github.com/fujidaiti/psqlb/sb"
+//	)
+//
+// That is the whole reason for the split. Dot-importing one package that held
+// both would also put Stm, Row, Id, Lit and Raw into the user's file scope,
+// where they collide with ordinary Go names and no longer look different from
+// the SQL vocabulary.
+//
+// The keyword types that the constants are declared with (ListKw, PrefixKw and
+// the rest) are in internal/kw, which neither package re-exports. A user
+// therefore cannot declare a keyword of their own; a keyword this package does
+// not model is written with Op or Kw.
 //
 // # Golden rules
 //
@@ -76,12 +92,12 @@
 //	SELECT, UsersID, UsersName          // operand: users.id, users.name
 //	SELECT, DISTINCT, UsersID           // prefix:  DISTINCT users.id
 //	ORDER_BY, UsersID, DESC, UsersName  // postfix: users.id DESC, users.name
-//	SELECT, UsersAge, GTE, Lit(18)      // infix:   users.age >= $1
+//	SELECT, UsersAge, GTE, sb.Lit(18)      // infix:   users.age >= $1
 //
 // The remaining two choose the separator. A list keyword opens a
 // comma-separated list; a clause keyword closes it and returns to spaces:
 //
-//	SELECT, UsersID, UsersName, FROM, Users, WHERE, UsersID, EQ, Lit(1)
+//	SELECT, UsersID, UsersName, FROM, Users, WHERE, UsersID, EQ, sb.Lit(1)
 //	//     `------ list ------'        `-'         `-------------'
 //	//     SELECT opens              FROM opens   WHERE closes
 //
@@ -94,16 +110,16 @@
 //
 // # Shapes
 //
-//	Shape in SQL                 | Shape in Go       | Example
-//	-----------------------------|-------------------|------------------------------------
-//	Space-separated group        | Stm(...)          | Stm(a, OR, b)      -> (a OR b)
-//	Comma-separated list         | Row(...)          | Row(x, y)          -> (x, y)
-//	Any keyword                  | Constant          | SELECT FROM WHERE IN OVER
-//	Infix operator               | Constant or Op()  | EQ LIKE, Op("@>")
-//	Function call                | Func(name, ...)   | Func("COUNT", STAR)
-//	Identifier                   | Id constant       | UsersID
-//	Value                        | Lit()             | Lit(42)
-//	Anything unmodelled          | Raw() Op() Kw()   | Raw("x = $0", 1)
+//	Shape in SQL                 | Shape in Go              | Example
+//	-----------------------------|--------------------------|-----------------------------------
+//	Space-separated group        | sb.Stm(...)              | sb.Stm(a, OR, b)  -> (a OR b)
+//	Comma-separated list         | sb.Row(...)              | sb.Row(x, y)      -> (x, y)
+//	Any keyword                  | Constant                 | SELECT FROM WHERE IN OVER
+//	Infix operator               | Constant or sb.Op()      | EQ LIKE, sb.Op("@>")
+//	Function call                | sb.Func(name, ...)       | sb.Func("COUNT", STAR)
+//	Identifier                   | sb.Id constant           | UsersID
+//	Value                        | sb.Lit()                 | sb.Lit(42)
+//	Anything unmodelled          | sb.Raw() sb.Op() sb.Kw() | sb.Raw("x = $0", 1)
 //
 // Every keyword is a constant. DISTINCT_ON is the sole function, for the reason
 // recorded on it.
@@ -115,21 +131,21 @@
 // parenthesised whenever it is nested and bare at the outermost level, so
 // nesting in Go is nesting in SQL:
 //
-//	Stm(a, Stm(b, OR, c))      // a (b OR c)
-//	FROM, Stm(sub), AS, Id("x")  // FROM (SELECT ...) AS x
+//	sb.Stm(a, sb.Stm(b, OR, c))       // a (b OR c)
+//	FROM, sb.Stm(sub), AS, sb.Id("x") // FROM (SELECT ...) AS x
 //
 // There is no way to nest a Stm without parentheses, and no automatic removal
 // of them. To reuse a fragment where parentheses are unwanted, keep it as a
 // []Clause and spread it:
 //
-//	inner := []Clause{SELECT, OrdersUserID, FROM, Orders}
-//	Stm(SELECT, STAR, FROM, Users, WHERE, UsersID, IN, Stm(inner...))
+//	inner := []sb.Clause{SELECT, OrdersUserID, FROM, Orders}
+//	sb.Stm(SELECT, STAR, FROM, Users, WHERE, UsersID, IN, sb.Stm(inner...))
 //
 // Choosing between Stm and Row after such a keyword chooses the query, and both
 // choices are legal SQL:
 //
-//	UsersID, IN, Stm(SELECT, OrdersUserID, FROM, Orders) // IN (SELECT ...)     membership
-//	UsersID, IN, Row(Stm(inner...))                      // IN ((SELECT ...))   one-element list
+//	UsersID, IN, sb.Stm(SELECT, OrdersUserID, FROM, Orders) // IN (SELECT ...)   membership
+//	UsersID, IN, sb.Row(sb.Stm(inner...))                   // IN ((SELECT ...)) one-element list
 //
 // The second compares against a list of one scalar subquery, so it fails at
 // execution if the subquery returns more than one row.
@@ -138,9 +154,9 @@
 // needs no wrapper of its own, and a leading list keyword takes over the
 // separator:
 //
-//	Row(Lit("active"), Lit("trial"))                           // ($1, $2)
-//	Func("string_agg", UsersName, Lit(","), ORDER_BY, UsersID) // string_agg(users.name, $1 ORDER BY users.id)
-//	Func("COUNT", DISTINCT, UsersID)                           // COUNT(DISTINCT users.id)
+//	sb.Row(sb.Lit("active"), sb.Lit("trial"))                       // ($1, $2)
+//	sb.Func("string_agg", UsersName, sb.Lit(","), ORDER_BY, UsersID) // string_agg(users.name, $1 ORDER BY users.id)
+//	sb.Func("COUNT", DISTINCT, UsersID)                             // COUNT(DISTINCT users.id)
 //
 // # Values and $N
 //
@@ -206,11 +222,13 @@
 //
 //   - Nothing here has been run against a real database. The tests check the
 //     generated string and the bound args, nothing more.
-package sql
+package sb
 
 import (
 	"fmt"
 	"strings"
+
+	"github.com/fujidaiti/psqlb/internal/kw"
 )
 
 // ===========================================================================
@@ -225,81 +243,15 @@ type Clause interface {
 	BuildSQL(args []any) (string, []any, error)
 }
 
-// kind is what the walker needs to know about a token: whether it takes a comma
-// and what the token after it does. See the package doc.
-type kind int
-
-const (
-	kindOperand kind = iota // begins an item, clears glue
-	kindPrefix              // begins an item, sets glue
-	kindPostfix             // continues an item, clears glue
-	kindInfix               // continues an item, sets glue
-	kindList                // opens a comma-separated list
-	kindClause              // closes it, back to space-separated
-)
-
-// kinded is implemented by every token that is not an operand. Id, Statement,
-// EXCLUDED and any Clause implemented outside this package do not implement it,
-// and are operands: that is the common case, so it is the default.
-type kinded interface{ sqlKind() kind }
-
-func kindOf(c Clause) kind {
-	if k, ok := c.(kinded); ok {
-		return k.sqlKind()
-	}
-	return kindOperand
-}
-
-// The five keyword types. Their underlying type is string so that the keywords
-// below can be declared with const, which is what lets the walker read a
-// token's kind before building it.
-type (
-	operandKw string
-	prefixKw  string
-	postfixKw string
-	infixKw   string
-	listKw    string
-	clauseKw  string
-
-	// setKw is a list keyword that also opens the scope in which a
-	// table-qualified column name is emitted bare. SET is its only value.
-	setKw string
-
-	// excludedKw consumes the token after it. EXCLUDED is its only value.
-	excludedKw string
-)
-
-func (k operandKw) sqlKind() kind { return kindOperand }
-func (k prefixKw) sqlKind() kind  { return kindPrefix }
-func (k postfixKw) sqlKind() kind { return kindPostfix }
-func (k infixKw) sqlKind() kind   { return kindInfix }
-func (k listKw) sqlKind() kind    { return kindList }
-func (k clauseKw) sqlKind() kind  { return kindClause }
-func (k setKw) sqlKind() kind     { return kindList }
-
-func (k operandKw) BuildSQL(args []any) (string, []any, error) { return string(k), args, nil }
-func (k prefixKw) BuildSQL(args []any) (string, []any, error)  { return string(k), args, nil }
-func (k postfixKw) BuildSQL(args []any) (string, []any, error) { return string(k), args, nil }
-func (k infixKw) BuildSQL(args []any) (string, []any, error)   { return string(k), args, nil }
-func (k listKw) BuildSQL(args []any) (string, []any, error)    { return string(k), args, nil }
-func (k clauseKw) BuildSQL(args []any) (string, []any, error)  { return string(k), args, nil }
-func (k setKw) BuildSQL(args []any) (string, []any, error)     { return string(k), args, nil }
-
-// EXCLUDED and Id satisfy Clause so that they can be written as tokens, but the
-// walker intercepts both types before building them: EXCLUDED to read the name
-// after it, Id to strip a qualifier inside SET. These two methods are therefore
-// never reached from walk.
-func (k excludedKw) BuildSQL(args []any) (string, []any, error) { return string(k), args, nil }
-
 // token is every token whose text is not known until build time: Lit, Raw, Row,
 // Func and DISTINCT_ON. It carries its kind explicitly
 // because it has no dedicated type to carry it.
 type token struct {
-	k     kind
+	k     kw.Kind
 	build func([]any) (string, []any, error)
 }
 
-func (t token) sqlKind() kind { return t.k }
+func (t token) SQLKind() kw.Kind { return t.k }
 
 func (t token) BuildSQL(args []any) (string, []any, error) { return t.build(args) }
 
@@ -351,7 +303,7 @@ func walk(items []Clause, m mode, args []any) (string, []any, error) {
 
 	for i := 0; i < len(items); i++ {
 		var (
-			k   = kindOperand
+			k   = kw.KindOperand
 			sql string
 			err error
 		)
@@ -361,16 +313,16 @@ func walk(items []Clause, m mode, args []any) (string, []any, error) {
 			// An optional token left in place. It produces nothing.
 			continue
 
-		case excludedKw:
+		case kw.ExcludedKw:
 			// EXCLUDED.name is one operand spelled as two tokens. Reading the
 			// next token here, as a typed value, is why it needs no mode
 			// threaded through BuildSQL.
 			if i+1 >= len(items) {
-				return "", args, fmt.Errorf("sql: EXCLUDED is the last token, but it must be followed by an Id")
+				return "", args, fmt.Errorf("psqlb: EXCLUDED is the last token, but it must be followed by an Id")
 			}
 			col, ok := items[i+1].(Id)
 			if !ok {
-				return "", args, fmt.Errorf("sql: EXCLUDED must be followed by an Id, got %T", items[i+1])
+				return "", args, fmt.Errorf("psqlb: EXCLUDED must be followed by an Id, got %T", items[i+1])
 			}
 			i++
 			sql = "EXCLUDED." + unqualify(col)
@@ -398,7 +350,7 @@ func walk(items []Clause, m mode, args []any) (string, []any, error) {
 			}
 
 		default:
-			k = kindOf(items[i])
+			k = kw.KindOf(items[i])
 			sql, args, err = items[i].BuildSQL(args)
 			if err != nil {
 				return "", args, err
@@ -412,7 +364,7 @@ func walk(items []Clause, m mode, args []any) (string, []any, error) {
 		if b.Len() > 0 {
 			sep := space
 			switch k {
-			case kindOperand, kindPrefix:
+			case kw.KindOperand, kw.KindPrefix:
 				if m == listMode && pos == posNext {
 					sep = comma
 				}
@@ -422,14 +374,14 @@ func walk(items []Clause, m mode, args []any) (string, []any, error) {
 		b.WriteString(sql)
 
 		switch k {
-		case kindList:
+		case kw.KindList:
 			m, pos = listMode, posHead
-			_, inSet = items[i].(setKw)
-		case kindClause:
+			_, inSet = items[i].(kw.SetKw)
+		case kw.KindClause:
 			m, pos, inSet = spaceMode, posGlue, false
-		case kindPrefix, kindInfix:
+		case kw.KindPrefix, kw.KindInfix:
 			pos = posGlue
-		case kindOperand, kindPostfix:
+		case kw.KindOperand, kw.KindPostfix:
 			pos = posNext
 		}
 	}
@@ -462,18 +414,25 @@ func (s Statement) ToSQL() (string, []any, error) { return s.BuildSQL(nil) }
 
 // paren renders items in list mode inside parentheses, with kw in front of them
 // if there is one. Row and DISTINCT_ON are its only two callers.
-func paren(kw string, k kind, items []Clause) Clause {
+func paren(keyword string, k kw.Kind, items []Clause) Clause {
 	cp := dup(items)
 	return token{k: k, build: func(args []any) (string, []any, error) {
 		s, args, err := walk(cp, listMode, args)
 		if err != nil {
 			return "", args, err
 		}
-		if kw == "" {
+		if keyword == "" {
 			return "(" + s + ")", args, nil
 		}
-		return kw + " (" + s + ")", args, nil
+		return keyword + " (" + s + ")", args, nil
 	}}
+}
+
+// PrefixGroup renders items as a comma-separated parenthesised list with the
+// given keyword in front of it, as a prefix token. DISTINCT_ON is its only
+// caller, and it is exported for that reason alone.
+func PrefixGroup(keyword string, items ...Clause) Clause {
+	return paren(keyword, kw.KindPrefix, items)
 }
 
 // Row is a comma-separated parenthesised list. A row constructor, a row of
@@ -483,7 +442,7 @@ func paren(kw string, k kind, items []Clause) Clause {
 //	Row(UsersCreated, UsersID) // (users.created_at, users.id)
 //
 // Row() renders "()", which GROUPING SETS accepts.
-func Row(items ...Clause) Clause { return paren("", kindOperand, items) }
+func Row(items ...Clause) Clause { return paren("", kw.KindOperand, items) }
 
 // Func covers any SQL function, which is what spares the package from growing
 // separate COUNT, SUM and COALESCE helpers. Its arguments are comma-separated,
@@ -494,7 +453,7 @@ func Row(items ...Clause) Clause { return paren("", kindOperand, items) }
 //	Func("string_agg", UsersName, Lit(","), ORDER_BY, UsersID) // string_agg(users.name, $1 ORDER BY users.id)
 func Func(name string, items ...Clause) Clause {
 	cp := dup(items)
-	return token{k: kindOperand, build: func(args []any) (string, []any, error) {
+	return token{k: kw.KindOperand, build: func(args []any) (string, []any, error) {
 		s, args, err := walk(cp, listMode, args)
 		if err != nil {
 			return "", args, err
@@ -519,7 +478,7 @@ func (i Id) BuildSQL(args []any) (string, []any, error) { return string(i), args
 //
 //	Stm(WHERE, UsersAge, GTE, Lit(18)) // WHERE users.age >= $1
 func Lit(v any) Clause {
-	return token{k: kindOperand, build: func(args []any) (string, []any, error) {
+	return token{k: kw.KindOperand, build: func(args []any) (string, []any, error) {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args)), args, nil
 	}}
@@ -553,10 +512,10 @@ func Raw(sql string, vals ...any) Clause {
 	parts, err := splitMarkers(sql)
 	cp := dup(vals)
 	if err == nil && len(parts)-1 != len(cp) {
-		err = fmt.Errorf("sql: Raw: fragment has %d $0 marker(s) but %d value(s): %s",
+		err = fmt.Errorf("psqlb: Raw: fragment has %d $0 marker(s) but %d value(s): %s",
 			len(parts)-1, len(cp), sql)
 	}
-	return token{k: kindOperand, build: func(args []any) (string, []any, error) {
+	return token{k: kw.KindOperand, build: func(args []any) (string, []any, error) {
 		if err != nil {
 			return "", args, err
 		}
@@ -593,7 +552,7 @@ func splitMarkers(sql string) ([]string, error) {
 			continue
 		}
 		if rest[:n] != "0" {
-			return nil, fmt.Errorf("sql: Raw: fragment contains $%s, but only $0 marks a value: %s",
+			return nil, fmt.Errorf("psqlb: Raw: fragment contains $%s, but only $0 marks a value: %s",
 				rest[:n], sql)
 		}
 		parts = append(parts, buf.String())
@@ -607,205 +566,14 @@ func splitMarkers(sql string) ([]string, error) {
 // a fixed list: extensions add their own.
 //
 //	Stm(WHERE, UsersMeta, Op("@>"), Lit(`{"vip":true}`)) // WHERE users.meta @> $1
-func Op(sql string) Clause { return infixKw(sql) }
+func Op(sql string) Clause { return kw.InfixKw(sql) }
 
 // Kw is a clause keyword written by hand, for a clause the package does not
 // model. Being a clause keyword, it closes any open comma-separated list, which
 // is what an unmodelled clause almost always wants.
 //
 //	Kw("ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW")
-func Kw(sql string) Clause { return clauseKw(sql) }
-
-// ===========================================================================
-// Keyword constants
-// ===========================================================================
-
-// List keywords open a comma-separated list. Everything until the next clause
-// keyword is joined with commas.
-const (
-	SELECT         listKw = "SELECT"
-	FROM           listKw = "FROM"
-	GROUP_BY       listKw = "GROUP BY"
-	ORDER_BY       listKw = "ORDER BY"
-	RETURNING      listKw = "RETURNING"
-	PARTITION_BY   listKw = "PARTITION BY"
-	WITH           listKw = "WITH"
-	WITH_RECURSIVE listKw = "WITH RECURSIVE"
-	VALUES         listKw = "VALUES"
-)
-
-// SET is a list keyword that also strips the table qualifier from the name that
-// begins each assignment, since "SET users.status = ..." is not legal. The
-// right-hand side is left alone.
-//
-//	Stm(UPDATE, Users, SET, UsersStatus, EQ, Func("upper", UsersName))
-//	// UPDATE users SET status = upper(users.name)
-//
-// This is a deliberate exception to the second golden rule: SQL has no such
-// rule, and the DSL text differs from the SQL text. It is kept because writing
-// Id("status") for every assignment is the common case and the qualified
-// constant is the one already at hand.
-const SET setKw = "SET"
-
-// Clause keywords close a comma-separated list and return to space separation.
-const (
-	WHERE  clauseKw = "WHERE"
-	HAVING clauseKw = "HAVING"
-	ON     clauseKw = "ON"
-	LIMIT  clauseKw = "LIMIT"
-	OFFSET clauseKw = "OFFSET"
-
-	UPDATE      clauseKw = "UPDATE"
-	DELETE_FROM clauseKw = "DELETE FROM"
-
-	// INSERT_INTO is followed by the table and, if the columns are named, by a
-	// Row of them. The names must be bare, since "INSERT INTO users
-	// (users.name)" is not legal, so write Id("name") rather than UsersName.
-	//
-	//	INSERT_INTO, Users, Row(Id("name"), Id("email")), VALUES, Row(...)
-	//	// INSERT INTO users (name, email) VALUES (...)
-	INSERT_INTO clauseKw = "INSERT INTO"
-
-	// ON_CONFLICT takes a Row naming the conflict target, or nothing at all.
-	//
-	//	ON_CONFLICT, Row(Id("email")), DO_UPDATE, SET, ...
-	//	ON_CONFLICT, DO_NOTHING
-	ON_CONFLICT clauseKw = "ON CONFLICT"
-
-	JOIN       clauseKw = "JOIN"
-	LEFT_JOIN  clauseKw = "LEFT JOIN"
-	INNER_JOIN clauseKw = "INNER JOIN"
-	CROSS_JOIN clauseKw = "CROSS JOIN"
-
-	UNION     clauseKw = "UNION"
-	UNION_ALL clauseKw = "UNION ALL"
-	INTERSECT clauseKw = "INTERSECT"
-	EXCEPT    clauseKw = "EXCEPT"
-
-	DO_UPDATE  clauseKw = "DO UPDATE"
-	DO_NOTHING clauseKw = "DO NOTHING"
-)
-
-// Infix tokens sit between two operands and keep the item open, so the operand
-// after them takes no comma.
-const (
-	AND infixKw = "AND"
-	OR  infixKw = "OR"
-
-	// TODO: see TODO.md. EQ, NE, GTE and the rest are not SQL spellings, which
-	// is a deviation from the first golden rule. Go identifiers cannot be "="
-	// or ">=", so the alternative is Op(">=") everywhere.
-	EQ    infixKw = "="
-	NE    infixKw = "<>"
-	GT    infixKw = ">"
-	GTE   infixKw = ">="
-	LT    infixKw = "<"
-	LTE   infixKw = "<="
-	LIKE  infixKw = "LIKE"
-	ILIKE infixKw = "ILIKE"
-	CAST  infixKw = "::"
-
-	// AS introduces an alias, and it is also how a CTE is named. The
-	// parentheses a CTE body always has come from its being a nested Stm.
-	//
-	//	Stm(sub, AS, Id("n"))                     // (SELECT ...) AS n
-	//	Stm(WITH, Id("tree"), AS, body, SELECT, …) // WITH tree AS (SELECT ...) SELECT …
-	AS infixKw = "AS"
-
-	// MATERIALIZED is infix rather than a clause keyword, so that it does not
-	// close the WITH list and swallow the comma before the next CTE.
-	MATERIALIZED infixKw = "MATERIALIZED"
-
-	// WHEN, THEN and ELSE keep a CASE expression open, which is what lets one
-	// sit in the middle of a SELECT list without breaking the commas.
-	WHEN infixKw = "WHEN"
-	THEN infixKw = "THEN"
-	ELSE infixKw = "ELSE"
-)
-
-// Prefix tokens begin an item and keep it open, so the operand after them takes
-// no comma.
-const (
-	// NOT is correct in WHERE NOT a, in NOT, EXISTS(...) and in SELECT NOT flag.
-	// As a modifier inside a comma-separated list it is not; write
-	// Op("NOT IN"), Row(...) there.
-	NOT prefixKw = "NOT"
-
-	DISTINCT prefixKw = "DISTINCT"
-
-	// LATERAL is a constant rather than a function, because it is not always
-	// followed by a parenthesised group of its own: in
-	// JOIN LATERAL unnest(a) AS t it applies to a function call.
-	LATERAL prefixKw = "LATERAL"
-
-	CASE prefixKw = "CASE"
-)
-
-// Postfix tokens attach to the operand before them and end the item, so the
-// operand after them starts a new one and takes a comma.
-const (
-	IS_NULL     postfixKw = "IS NULL"
-	IS_NOT_NULL postfixKw = "IS NOT NULL"
-
-	ASC         postfixKw = "ASC"
-	DESC        postfixKw = "DESC"
-	NULLS_FIRST postfixKw = "NULLS FIRST"
-	NULLS_LAST  postfixKw = "NULLS LAST"
-
-	END postfixKw = "END"
-)
-
-// Operands are complete expressions on their own.
-const (
-	STAR  operandKw = "*"
-	TRUE  operandKw = "TRUE"
-	FALSE operandKw = "FALSE"
-	NULL  operandKw = "NULL"
-)
-
-// EXCLUDED reads the name after it, so EXCLUDED, UsersName renders
-// EXCLUDED.name. The qualifier is stripped, since only the column name is legal
-// there.
-//
-// TODO: see TODO.md. This breaks the second golden rule twice over: two tokens
-// produce one operand, and the name is rewritten. SQL has no such rule;
-// EXCLUDED.name is an ordinary qualified name.
-const EXCLUDED excludedKw = "EXCLUDED"
-
-// The keywords SQL always follows with one parenthesised group are constants
-// like any other, and the group after them is written with Row or Stm. They are
-// infixes, because each sits between the expression before it and that group:
-//
-//	UsersStatus, IN, Row(Lit("active"), Lit("trial"))     // users.status IN ($1, $2)
-//	UsersID, IN, Stm(SELECT, OrdersUserID, FROM, Orders)  // users.id IN (SELECT ...)
-//	UsersID, EQ, ANY, Stm(SELECT, OrdersUserID, FROM, Orders)
-//	Func("COUNT", STAR), FILTER, Stm(WHERE, UsersIsPaid)  // COUNT(*) FILTER (WHERE users.paid)
-//	Func("SUM", OrdersTotal), OVER, Stm(PARTITION_BY, OrdersUserID)
-//	Func("SUM", OrdersTotal), OVER, Id("w")               // SUM(...) OVER w
-const (
-	IN     infixKw = "IN"
-	ANY    infixKw = "ANY"
-	FILTER infixKw = "FILTER"
-	OVER   infixKw = "OVER"
-)
-
-// EXISTS is a prefix rather than an infix, because it has no left operand.
-//
-//	WHERE, NOT, EXISTS, Stm(SELECT, Lit(1), FROM, Orders)
-const EXISTS prefixKw = "EXISTS"
-
-// DISTINCT_ON is the one keyword that still carries its own parentheses. As a
-// constant it would work as far as the group, but the group is an operand and
-// so ends the item, and the first column of the SELECT list would then take a
-// comma: "SELECT DISTINCT ON (users.id), users.id". Writing the parentheses
-// here keeps it glued past them.
-//
-//	SELECT, DISTINCT_ON(UsersID), UsersID, UsersName
-//	// SELECT DISTINCT ON (users.id) users.id, users.name
-//
-// TODO: see TODO.md. Either find a spelling that obeys the parentheses rule or
-// record this as a permanent exception.
-func DISTINCT_ON(items ...Clause) Clause { return paren("DISTINCT ON", kindPrefix, items) }
+func Kw(sql string) Clause { return kw.ClauseKw(sql) }
 
 func unqualify(i Id) string {
 	s := string(i)
