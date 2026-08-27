@@ -28,6 +28,30 @@
 //
 //	import . "github.com/fujidaiti/psqlb"
 //
+// # Golden rules
+//
+// Three rules decide every design question in this package. When a convenience
+// and a rule disagree, the rule wins.
+//
+//  1. The DSL should look like the raw SQL it produces. Tokens are written in
+//     the order SQL reads them, and a reader who knows SQL should be able to
+//     read the Go without learning a second vocabulary.
+//
+//  2. Do not introduce a special rule or a keyword that does not exist in SQL.
+//     The package models SQL; it does not extend it. A construct that has no
+//     counterpart in SQL has no place here, and neither does a keyword that
+//     behaves differently from the one it is named after.
+//
+//  3. Parentheses are explicit. If parentheses are wanted in the SQL string,
+//     something must be written for them in the DSL: Stm for a
+//     space-separated group, Row for a comma-separated one. Parentheses are
+//     never added or removed on the reader's behalf.
+//
+// The exception to rule 3 is a keyword that SQL itself always follows with one
+// parenthesised group, such as IN or OVER. There the parentheses belong to the
+// keyword rather than to the expression inside them, so the function call that
+// spells the keyword also spells its parentheses.
+//
 // # Token kinds
 //
 // Every token has a kind, and the kind is its Go type. There are six. Four of
