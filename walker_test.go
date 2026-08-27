@@ -48,39 +48,39 @@ func TestKindsAtEveryPosition(t *testing.T) {
 	z := sb.Id("z")
 	run(t, []tcase{
 		// posHead: the token is the first item of the list.
-		{"head/operand", sb.Stm(SELECT, sb.Id("t"), z), "SELECT t, z", nil},
-		{"head/prefix", sb.Stm(SELECT, NOT, z), "SELECT NOT z", nil},
-		{"head/postfix", sb.Stm(SELECT, DESC, z), "SELECT DESC, z", nil},
-		{"head/infix", sb.Stm(SELECT, AND, z), "SELECT AND z", nil},
-		{"head/list", sb.Stm(SELECT, ORDER_BY, z), "SELECT ORDER BY z", nil},
-		{"head/clause", sb.Stm(SELECT, WHERE, z), "SELECT WHERE z", nil},
+		{"head/operand", sb.S(SELECT, sb.Id("t"), z), "SELECT t, z", nil},
+		{"head/prefix", sb.S(SELECT, NOT, z), "SELECT NOT z", nil},
+		{"head/postfix", sb.S(SELECT, DESC, z), "SELECT DESC, z", nil},
+		{"head/infix", sb.S(SELECT, AND, z), "SELECT AND z", nil},
+		{"head/list", sb.S(SELECT, ORDER_BY, z), "SELECT ORDER BY z", nil},
+		{"head/clause", sb.S(SELECT, WHERE, z), "SELECT WHERE z", nil},
 
 		// posGlue: an infix before the token leaves the item open, so the token
 		// itself never takes a comma.
-		{"glue/operand", sb.Stm(SELECT, sb.Id("a"), AS, sb.Id("t"), z), "SELECT a AS t, z", nil},
-		{"glue/prefix", sb.Stm(SELECT, sb.Id("a"), AS, NOT, z), "SELECT a AS NOT z", nil},
-		{"glue/postfix", sb.Stm(SELECT, sb.Id("a"), AS, DESC, z), "SELECT a AS DESC, z", nil},
-		{"glue/infix", sb.Stm(SELECT, sb.Id("a"), AS, AND, z), "SELECT a AS AND z", nil},
-		{"glue/list", sb.Stm(SELECT, sb.Id("a"), AS, ORDER_BY, z), "SELECT a AS ORDER BY z", nil},
-		{"glue/clause", sb.Stm(SELECT, sb.Id("a"), AS, WHERE, z), "SELECT a AS WHERE z", nil},
+		{"glue/operand", sb.S(SELECT, sb.Id("a"), AS, sb.Id("t"), z), "SELECT a AS t, z", nil},
+		{"glue/prefix", sb.S(SELECT, sb.Id("a"), AS, NOT, z), "SELECT a AS NOT z", nil},
+		{"glue/postfix", sb.S(SELECT, sb.Id("a"), AS, DESC, z), "SELECT a AS DESC, z", nil},
+		{"glue/infix", sb.S(SELECT, sb.Id("a"), AS, AND, z), "SELECT a AS AND z", nil},
+		{"glue/list", sb.S(SELECT, sb.Id("a"), AS, ORDER_BY, z), "SELECT a AS ORDER BY z", nil},
+		{"glue/clause", sb.S(SELECT, sb.Id("a"), AS, WHERE, z), "SELECT a AS WHERE z", nil},
 
 		// posNext: a completed operand before the token, so an operand or a
 		// prefix takes the comma and nothing else does.
-		{"next/operand", sb.Stm(SELECT, sb.Id("a"), sb.Id("t"), z), "SELECT a, t, z", nil},
-		{"next/prefix", sb.Stm(SELECT, sb.Id("a"), NOT, z), "SELECT a, NOT z", nil},
-		{"next/postfix", sb.Stm(SELECT, sb.Id("a"), DESC, z), "SELECT a DESC, z", nil},
-		{"next/infix", sb.Stm(SELECT, sb.Id("a"), AND, z), "SELECT a AND z", nil},
-		{"next/list", sb.Stm(SELECT, sb.Id("a"), ORDER_BY, z), "SELECT a ORDER BY z", nil},
-		{"next/clause", sb.Stm(SELECT, sb.Id("a"), WHERE, z), "SELECT a WHERE z", nil},
+		{"next/operand", sb.S(SELECT, sb.Id("a"), sb.Id("t"), z), "SELECT a, t, z", nil},
+		{"next/prefix", sb.S(SELECT, sb.Id("a"), NOT, z), "SELECT a, NOT z", nil},
+		{"next/postfix", sb.S(SELECT, sb.Id("a"), DESC, z), "SELECT a DESC, z", nil},
+		{"next/infix", sb.S(SELECT, sb.Id("a"), AND, z), "SELECT a AND z", nil},
+		{"next/list", sb.S(SELECT, sb.Id("a"), ORDER_BY, z), "SELECT a ORDER BY z", nil},
+		{"next/clause", sb.S(SELECT, sb.Id("a"), WHERE, z), "SELECT a WHERE z", nil},
 	})
 }
 
-// In space mode no token ever takes a comma, whatever its kind.
+// Once a clause keyword has switched a group to spaces, no token takes a comma,
+// whatever its kind.
 func TestNoCommasInSpaceMode(t *testing.T) {
 	run(t, []tcase{
-		{"operands", sb.Stm(WHERE, sb.Id("a"), sb.Id("b"), sb.Id("c")), "WHERE a b c", nil},
-		{"mixed", sb.Stm(WHERE, sb.Id("a"), DESC, sb.Id("b"), NOT, sb.Id("c")), "WHERE a DESC b NOT c", nil},
-		{"bare", sb.Stm(sb.Id("a"), sb.Id("b")), "a b", nil},
+		{"operands", sb.S(WHERE, sb.Id("a"), sb.Id("b"), sb.Id("c")), "WHERE a b c", nil},
+		{"mixed", sb.S(WHERE, sb.Id("a"), DESC, sb.Id("b"), NOT, sb.Id("c")), "WHERE a DESC b NOT c", nil},
 	})
 }
 
@@ -89,13 +89,13 @@ func TestNoCommasInSpaceMode(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCommaPlacement(t *testing.T) {
-	cteA := sb.Stm(SELECT, sb.Lit(1))
-	cteB := sb.Stm(SELECT, sb.Lit(2))
+	cteA := sb.S(SELECT, sb.Lit(1))
+	cteB := sb.S(SELECT, sb.Lit(2))
 
 	run(t, []tcase{
 		{
 			"case nested in case",
-			sb.Stm(SELECT, UsersID,
+			sb.S(SELECT, UsersID,
 				CASE, WHEN, UsersIsPaid, THEN,
 				CASE, WHEN, UsersHasTicket, THEN, sb.Lit(1), ELSE, sb.Lit(2), END,
 				ELSE, sb.Lit(3), END,
@@ -111,40 +111,40 @@ func TestCommaPlacement(t *testing.T) {
 		{
 			// A simple CASE, where the operand comes before the first WHEN.
 			"simple case",
-			sb.Stm(SELECT, CASE, UsersStatus, WHEN, sb.Lit("a"), THEN, sb.Lit(1), END, UsersName),
+			sb.S(SELECT, CASE, UsersStatus, WHEN, sb.Lit("a"), THEN, sb.Lit(1), END, UsersName),
 			"SELECT CASE users.status WHEN $1 THEN $2 END, users.name",
 			[]any{"a", 1},
 		},
 		{
 			"distinct on two columns",
-			sb.Stm(SELECT, DISTINCT_ON(UsersID, UsersName), UsersID, UsersName, FROM, Users),
+			sb.S(SELECT, DISTINCT_ON(UsersID, UsersName), UsersID, UsersName, FROM, Users),
 			"SELECT DISTINCT ON (users.id, users.name) users.id, users.name FROM users",
 			nil,
 		},
 		{
-			// IN is an infix, so the sb.Row after it does not take the comma and
-			// the item after the sb.Row does.
+			// IN is an infix, so the group after it does not take the comma and
+			// the item after the group does.
 			"in mid-list",
-			sb.Stm(SELECT, sb.Id("x"), IN, sb.Row(sb.Lit(1)), sb.Id("y"), FROM, Users),
+			sb.S(SELECT, sb.Id("x"), IN, sb.S(sb.Lit(1)), sb.Id("y"), FROM, Users),
 			"SELECT x IN ($1), y FROM users",
 			[]any{1},
 		},
 		{
 			// EXISTS is a prefix, so it begins an item and does take the comma.
 			"exists mid-list",
-			sb.Stm(SELECT, sb.Id("x"), EXISTS, sb.Stm(SELECT, sb.Lit(1)), sb.Id("y")),
+			sb.S(SELECT, sb.Id("x"), EXISTS, sb.S(SELECT, sb.Lit(1)), sb.Id("y")),
 			"SELECT x, EXISTS (SELECT $1), y",
 			[]any{1},
 		},
 		{
 			"not exists mid-list",
-			sb.Stm(SELECT, sb.Id("x"), NOT, EXISTS, sb.Stm(SELECT, sb.Lit(1))),
+			sb.S(SELECT, sb.Id("x"), NOT, EXISTS, sb.S(SELECT, sb.Lit(1))),
 			"SELECT x, NOT EXISTS (SELECT $1)",
 			[]any{1},
 		},
 		{
 			"not exists in space mode",
-			sb.Stm(WHERE, NOT, EXISTS, sb.Stm(SELECT, sb.Lit(1))),
+			sb.S(WHERE, NOT, EXISTS, sb.S(SELECT, sb.Lit(1))),
 			"WHERE NOT EXISTS (SELECT $1)",
 			[]any{1},
 		},
@@ -152,26 +152,26 @@ func TestCommaPlacement(t *testing.T) {
 			// MATERIALIZED is an infix, so it does not close the WITH list and
 			// the comma before the second CTE survives.
 			"two ctes one materialized",
-			sb.Stm(WITH, sb.Id("a"), AS, MATERIALIZED, cteA, sb.Id("b"), AS, cteB,
+			sb.S(WITH, sb.Id("a"), AS, MATERIALIZED, cteA, sb.Id("b"), AS, cteB,
 				SELECT, STAR, FROM, sb.Id("a")),
 			"WITH a AS MATERIALIZED (SELECT $1), b AS (SELECT $2) SELECT * FROM a",
 			[]any{1, 2},
 		},
 		{
 			"between inside a list",
-			sb.Stm(SELECT, UsersAge, sb.Op("BETWEEN"), sb.Lit(1), AND, sb.Lit(2), UsersName),
+			sb.S(SELECT, UsersAge, sb.Op("BETWEEN"), sb.Lit(1), AND, sb.Lit(2), UsersName),
 			"SELECT users.age BETWEEN $1 AND $2, users.name",
 			[]any{1, 2},
 		},
 		{
 			"order by asc nulls first",
-			sb.Stm(ORDER_BY, UsersID, ASC, NULLS_FIRST, UsersName, DESC, NULLS_LAST),
+			sb.S(ORDER_BY, UsersID, ASC, NULLS_FIRST, UsersName, DESC, NULLS_LAST),
 			"ORDER BY users.id ASC NULLS FIRST, users.name DESC NULLS LAST",
 			nil,
 		},
 		{
 			"group by then having",
-			sb.Stm(SELECT, UsersID, sb.Func("COUNT", STAR),
+			sb.S(SELECT, UsersID, sb.Func("COUNT", STAR),
 				FROM, Users,
 				GROUP_BY, UsersID,
 				HAVING, sb.Func("COUNT", STAR), GT, sb.Lit(1)),
@@ -180,25 +180,25 @@ func TestCommaPlacement(t *testing.T) {
 		},
 		{
 			"from list then join",
-			sb.Stm(SELECT, STAR, FROM, Users, Orders, LEFT_JOIN, sb.Id("p"), ON, TRUE),
+			sb.S(SELECT, STAR, FROM, Users, Orders, LEFT_JOIN, sb.Id("p"), ON, TRUE),
 			"SELECT * FROM users, orders LEFT JOIN p ON TRUE",
 			nil,
 		},
 		{
 			"is null postfix ends the item",
-			sb.Stm(SELECT, UsersEmail, IS_NOT_NULL, UsersName, IS_NULL),
+			sb.S(SELECT, UsersEmail, IS_NOT_NULL, UsersName, IS_NULL),
 			"SELECT users.email IS NOT NULL, users.name IS NULL",
 			nil,
 		},
 		{
 			"select distinct",
-			sb.Stm(SELECT, DISTINCT, UsersID, UsersName),
+			sb.S(SELECT, DISTINCT, UsersID, UsersName),
 			"SELECT DISTINCT users.id, users.name",
 			nil,
 		},
 		{
 			"cast",
-			sb.Stm(SELECT, UsersMeta, CAST, sb.Raw("jsonb"), UsersName),
+			sb.S(SELECT, UsersMeta, CAST, sb.Raw("jsonb"), UsersName),
 			"SELECT users.meta :: jsonb, users.name",
 			nil,
 		},
@@ -213,57 +213,74 @@ func TestModes(t *testing.T) {
 	run(t, []tcase{
 		{
 			"list reopened after a clause keyword closed it",
-			sb.Stm(SELECT, UsersID, UsersName, WHERE, TRUE, ORDER_BY, UsersID, UsersName),
+			sb.S(SELECT, UsersID, UsersName, WHERE, TRUE, ORDER_BY, UsersID, UsersName),
 			"SELECT users.id, users.name WHERE TRUE ORDER BY users.id, users.name",
 			nil,
 		},
 		{
 			"clause keyword closes the list mid-statement",
-			sb.Stm(SELECT, UsersID, LIMIT, sb.Lit(1), OFFSET, sb.Lit(2)),
+			sb.S(SELECT, UsersID, LIMIT, sb.Lit(1), OFFSET, sb.Lit(2)),
 			"SELECT users.id LIMIT $1 OFFSET $2",
 			[]any{1, 2},
 		},
 		{
 			"Kw closes the list like any clause keyword",
-			sb.Stm(SELECT, UsersID, sb.Kw("FOR UPDATE"), sb.Id("a"), sb.Id("b")),
+			sb.S(SELECT, UsersID, sb.Kw("FOR UPDATE"), sb.Id("a"), sb.Id("b")),
 			"SELECT users.id FOR UPDATE a b",
 			nil,
 		},
 		{
-			"Row starts in list mode",
-			sb.Stm(sb.Row(sb.Id("a"), sb.Id("b"))),
+			// Every group starts comma-separated, with no keyword needed to open
+			// the list, which is what a row constructor and an IN list rely on.
+			"a group starts in list mode",
+			sb.S(sb.S(sb.Id("a"), sb.Id("b"))),
 			"(a, b)",
 			nil,
 		},
 		{
+			"the outermost level starts in list mode too",
+			sb.S(sb.Id("a"), sb.Id("b")),
+			"a, b",
+			nil,
+		},
+		{
 			"Func starts in list mode",
-			sb.Stm(sb.Func("f", sb.Id("a"), sb.Id("b"))),
+			sb.S(sb.Func("f", sb.Id("a"), sb.Id("b"))),
 			"f(a, b)",
 			nil,
 		},
 		{
-			"Stm starts in space mode",
-			sb.Stm(sb.Id("a"), sb.Stm(sb.Id("b"), sb.Id("c"))),
-			"a (b c)",
+			// A clause keyword switches a group to spaces at its head, exactly as
+			// it does in the middle of a list.
+			"a clause keyword switches a group to spaces",
+			sb.S(sb.Id("a"), sb.S(WHERE, sb.Id("b"), sb.Id("c"))),
+			"a, (WHERE b c)",
 			nil,
 		},
 		{
-			// A leading list keyword takes over the separator, which is what
-			// lets a sb.Row hold a subquery.
-			"leading list keyword overrides list mode",
-			sb.Stm(WHERE, sb.Id("x"), IN, sb.Row(SELECT, UsersID, UsersName, FROM, Users)),
+			// Without one, the group stays comma-separated all the way down.
+			"a group with no keyword in it stays a list",
+			sb.S(sb.Id("a"), sb.S(sb.Id("b"), sb.Id("c"))),
+			"a, (b, c)",
+			nil,
+		},
+		{
+			// A leading list keyword sets the separator the group already had,
+			// which is what lets one group hold either a list or a subquery.
+			"a group holding a subquery",
+			sb.S(WHERE, sb.Id("x"), IN, sb.S(SELECT, UsersID, UsersName, FROM, Users)),
 			"WHERE x IN (SELECT users.id, users.name FROM users)",
 			nil,
 		},
 		{
 			"OVER holds a space-separated specification",
-			sb.Stm(SELECT, sb.Func("SUM", sb.Lit(1)), OVER, sb.Stm(PARTITION_BY, UsersID, ORDER_BY, UsersCreated)),
+			sb.S(SELECT, sb.Func("SUM", sb.Lit(1)), OVER, sb.S(PARTITION_BY, UsersID, ORDER_BY, UsersCreated)),
 			"SELECT SUM($1) OVER (PARTITION BY users.id ORDER BY users.created_at)",
 			[]any{1},
 		},
 		{
 			"OVER holds a window name, which needs no parentheses",
-			sb.Stm(SELECT, sb.Func("SUM", sb.Lit(1)), OVER, sb.Id("w")),
+			sb.S(SELECT, sb.Func("SUM", sb.Lit(1)), OVER, sb.Id("w")),
 			"SELECT SUM($1) OVER w",
 			[]any{1},
 		},
@@ -278,7 +295,7 @@ func TestBareNamePositions(t *testing.T) {
 	run(t, []tcase{
 		{
 			"two assignments",
-			sb.Stm(UPDATE, Users, SET, UsersName, EQ, sb.Lit("a"), UsersEmail, EQ, sb.Lit("b")),
+			sb.S(UPDATE, Users, SET, UsersName, EQ, sb.Lit("a"), UsersEmail, EQ, sb.Lit("b")),
 			"UPDATE users SET name = $1, email = $2",
 			[]any{"a", "b"},
 		},
@@ -286,31 +303,31 @@ func TestBareNamePositions(t *testing.T) {
 			// Only the name that begins the item is stripped, so a function call
 			// on the right-hand side keeps its qualifier.
 			"qualified right-hand side survives",
-			sb.Stm(UPDATE, Users, SET, UsersStatus, EQ, sb.Func("upper", UsersName)),
+			sb.S(UPDATE, Users, SET, UsersStatus, EQ, sb.Func("upper", UsersName)),
 			"UPDATE users SET status = upper(users.name)",
 			nil,
 		},
 		{
 			"qualified right-hand side as a bare Id survives",
-			sb.Stm(UPDATE, Users, SET, UsersStatus, EQ, UsersName),
+			sb.S(UPDATE, Users, SET, UsersStatus, EQ, UsersName),
 			"UPDATE users SET status = users.name",
 			nil,
 		},
 		{
 			"FROM clears the set scope",
-			sb.Stm(UPDATE, Users, SET, UsersName, EQ, sb.Lit("a"), FROM, Orders, Users),
+			sb.S(UPDATE, Users, SET, UsersName, EQ, sb.Lit("a"), FROM, Orders, Users),
 			"UPDATE users SET name = $1 FROM orders, users",
 			[]any{"a"},
 		},
 		{
 			"RETURNING clears the set scope",
-			sb.Stm(UPDATE, Users, SET, UsersName, EQ, sb.Lit("a"), RETURNING, UsersID, UsersName),
+			sb.S(UPDATE, Users, SET, UsersName, EQ, sb.Lit("a"), RETURNING, UsersID, UsersName),
 			"UPDATE users SET name = $1 RETURNING users.id, users.name",
 			[]any{"a"},
 		},
 		{
 			"WHERE clears the set scope",
-			sb.Stm(UPDATE, Users, SET, UsersName, EQ, sb.Lit("a"), WHERE, UsersID, EQ, sb.Lit(1)),
+			sb.S(UPDATE, Users, SET, UsersName, EQ, sb.Lit("a"), WHERE, UsersID, EQ, sb.Lit(1)),
 			"UPDATE users SET name = $1 WHERE users.id = $2",
 			[]any{"a", 1},
 		},
@@ -318,55 +335,55 @@ func TestBareNamePositions(t *testing.T) {
 			// EQ is an infix, not a mode-setting keyword, so it must not clear
 			// the scope; otherwise the second assignment keeps its qualifier.
 			"an infix does not clear the set scope",
-			sb.Stm(SET, UsersName, EQ, sb.Lit("a"), UsersEmail, EQ, sb.Lit("b")),
+			sb.S(SET, UsersName, EQ, sb.Lit("a"), UsersEmail, EQ, sb.Lit("b")),
 			"SET name = $1, email = $2",
 			[]any{"a", "b"},
 		},
 		{
 			"DELETE FROM",
-			sb.Stm(DELETE_FROM, Users, WHERE, UsersID, EQ, sb.Lit(1)),
+			sb.S(DELETE_FROM, Users, WHERE, UsersID, EQ, sb.Lit(1)),
 			"DELETE FROM users WHERE users.id = $1",
 			[]any{1},
 		},
 		{
 			"INSERT INTO with columns",
-			sb.Stm(INSERT_INTO, Users, sb.Row(sb.Id("name"), sb.Id("email"))),
+			sb.S(INSERT_INTO, Users, sb.S(sb.Id("name"), sb.Id("email"))),
 			"INSERT INTO users (name, email)",
 			nil,
 		},
 		{
 			"INSERT INTO with no columns",
-			sb.Stm(INSERT_INTO, Users, VALUES, sb.Row(sb.Lit(1))),
+			sb.S(INSERT_INTO, Users, VALUES, sb.S(sb.Lit(1))),
 			"INSERT INTO users VALUES ($1)",
 			[]any{1},
 		},
 		{
 			"ON CONFLICT with one column",
-			sb.Stm(ON_CONFLICT, sb.Row(sb.Id("email")), DO_NOTHING),
+			sb.S(ON_CONFLICT, sb.S(sb.Id("email")), DO_NOTHING),
 			"ON CONFLICT (email) DO NOTHING",
 			nil,
 		},
 		{
 			"ON CONFLICT with several columns",
-			sb.Stm(ON_CONFLICT, sb.Row(sb.Id("name"), sb.Id("email")), DO_NOTHING),
+			sb.S(ON_CONFLICT, sb.S(sb.Id("name"), sb.Id("email")), DO_NOTHING),
 			"ON CONFLICT (name, email) DO NOTHING",
 			nil,
 		},
 		{
 			"ON CONFLICT with no columns",
-			sb.Stm(ON_CONFLICT, DO_NOTHING),
+			sb.S(ON_CONFLICT, DO_NOTHING),
 			"ON CONFLICT DO NOTHING",
 			nil,
 		},
 		{
 			"two EXCLUDED assignments",
-			sb.Stm(SET, UsersName, EQ, EXCLUDED, UsersName, UsersEmail, EQ, EXCLUDED, UsersEmail),
+			sb.S(SET, UsersName, EQ, EXCLUDED, UsersName, UsersEmail, EQ, EXCLUDED, UsersEmail),
 			"SET name = EXCLUDED.name, email = EXCLUDED.email",
 			nil,
 		},
 		{
 			"EXCLUDED with an already bare name",
-			sb.Stm(SET, sb.Id("name"), EQ, EXCLUDED, sb.Id("name")),
+			sb.S(SET, sb.Id("name"), EQ, EXCLUDED, sb.Id("name")),
 			"SET name = EXCLUDED.name",
 			nil,
 		},
@@ -374,7 +391,7 @@ func TestBareNamePositions(t *testing.T) {
 			// EXCLUDED renders a complete operand, so a list item after it takes
 			// the comma.
 			"EXCLUDED ends the item",
-			sb.Stm(SET, UsersName, EQ, EXCLUDED, UsersName, UsersEmail, EQ, sb.Lit(1)),
+			sb.S(SET, UsersName, EQ, EXCLUDED, UsersName, UsersEmail, EQ, sb.Lit(1)),
 			"SET name = EXCLUDED.name, email = $1",
 			[]any{1},
 		},
@@ -386,86 +403,94 @@ func TestBareNamePositions(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNestingAndParens(t *testing.T) {
-	sub := sb.Stm(SELECT, sb.Lit(1))
+	sub := sb.S(SELECT, sb.Lit(1))
 
 	run(t, []tcase{
 		{
 			"three levels deep",
-			sb.Stm(sb.Id("a"), sb.Stm(sb.Id("b"), sb.Stm(sb.Id("c"), sb.Stm(sb.Id("d"))))),
-			"a (b (c (d)))",
+			sb.S(sb.Id("a"), sb.S(sb.Id("b"), sb.S(sb.Id("c"), sb.S(sb.Id("d"))))),
+			"a, (b, (c, (d)))",
 			nil,
 		},
 		{
-			"a Statement as a Row item",
-			sb.Stm(sb.Row(sub, sb.Lit(2))),
+			"a Statement as a group item",
+			sb.S(sb.S(sub, sb.Lit(2))),
 			"((SELECT $1), $2)",
 			[]any{1, 2},
 		},
 		{
 			"a Statement as a Func argument keeps both pairs",
-			sb.Stm(sb.Func("coalesce", sub, sb.Lit(0))),
+			sb.S(sb.Func("coalesce", sub, sb.Lit(0))),
 			"coalesce((SELECT $1), $2)",
 			[]any{1, 0},
 		},
 		{
-			// A sb.Row holding a nested sb.Statement is a one-element list containing
-			// a scalar subquery, not a membership test.
-			"a Statement inside a Row after IN is double-wrapped",
-			sb.Stm(WHERE, sb.Id("x"), IN, sb.Row(sub)),
+			// One more level of nesting is a one-element list containing a scalar
+			// subquery, not a membership test.
+			"a group inside a group after IN is double-wrapped",
+			sb.S(WHERE, sb.Id("x"), IN, sb.S(sub)),
 			"WHERE x IN ((SELECT $1))",
 			[]any{1},
 		},
 		{
-			"the same tokens in a Stm after IN are a membership test",
-			sb.Stm(WHERE, sb.Id("x"), IN, sb.Stm(SELECT, sb.Lit(1))),
+			"the same tokens one level up are a membership test",
+			sb.S(WHERE, sb.Id("x"), IN, sb.S(SELECT, sb.Lit(1))),
 			"WHERE x IN (SELECT $1)",
 			[]any{1},
 		},
 		{
-			"Row inside Row",
-			sb.Stm(sb.Row(sb.Row(sb.Id("a"), sb.Id("b")), sb.Id("c"))),
+			"group inside group",
+			sb.S(sb.S(sb.S(sb.Id("a"), sb.Id("b")), sb.Id("c"))),
 			"((a, b), c)",
 			nil,
 		},
 		{
-			"Row inside Stm inside Row",
-			sb.Stm(sb.Row(sb.Stm(sb.Row(sb.Id("a")), OR, sb.Row(sb.Id("b"))))),
+			"a grouped condition inside a group",
+			sb.S(sb.S(sb.S(sb.S(sb.Id("a")), OR, sb.S(sb.Id("b"))))),
 			"(((a) OR (b)))",
 			nil,
 		},
 		{
-			"empty Row renders a pair",
-			sb.Stm(sb.Row()),
+			"an empty group renders a pair",
+			sb.S(sb.S()),
 			"()",
 			nil,
 		},
 		{
-			"two empty Rows in a list",
-			sb.Stm(SELECT, sb.Row(), sb.Row()),
+			"two empty groups in a list",
+			sb.S(SELECT, sb.S(), sb.S()),
 			"SELECT (), ()",
 			nil,
 		},
 		{
 			"empty Func renders a pair",
-			sb.Stm(SELECT, sb.Func("f")),
+			sb.S(SELECT, sb.Func("f")),
 			"SELECT f()",
 			nil,
 		},
 		{
-			"an empty nested Stm renders nothing, not a pair",
-			sb.Stm(sb.Id("a"), sb.Stm(), sb.Id("b")),
-			"a b",
+			// Parentheses are always rendered, so an empty group is a pair rather
+			// than nothing. nil is what an optional token is written with.
+			"an empty nested group renders a pair, not nothing",
+			sb.S(sb.Id("a"), sb.S(), sb.Id("b")),
+			"a, (), b",
 			nil,
 		},
 		{
-			"an empty Stm at every level",
-			sb.Stm(sb.Stm(sb.Stm(sb.Stm()))),
-			"",
+			"a group whose tokens all render empty is still a pair",
+			sb.S(sb.Id("a"), sb.S(nil, nil), sb.Id("b")),
+			"a, (), b",
+			nil,
+		},
+		{
+			"an empty group at every level",
+			sb.S(sb.S(sb.S(sb.S()))),
+			"((()))",
 			nil,
 		},
 		{
 			"the outermost level is never parenthesised",
-			sb.Stm(SELECT, sb.Lit(1)),
+			sb.S(SELECT, sb.Lit(1)),
 			"SELECT $1",
 			[]any{1},
 		},
@@ -480,37 +505,37 @@ func TestMultiTokenArguments(t *testing.T) {
 	run(t, []tcase{
 		{
 			"string_agg with ORDER BY",
-			sb.Stm(SELECT, sb.Func("string_agg", UsersName, sb.Lit(","), ORDER_BY, UsersID)),
+			sb.S(SELECT, sb.Func("string_agg", UsersName, sb.Lit(","), ORDER_BY, UsersID)),
 			"SELECT string_agg(users.name, $1 ORDER BY users.id)",
 			[]any{","},
 		},
 		{
 			"COUNT DISTINCT",
-			sb.Stm(SELECT, sb.Func("COUNT", DISTINCT, UsersID)),
+			sb.S(SELECT, sb.Func("COUNT", DISTINCT, UsersID)),
 			"SELECT COUNT(DISTINCT users.id)",
 			nil,
 		},
 		{
 			"EXTRACT",
-			sb.Stm(SELECT, sb.Func("EXTRACT", sb.Raw("EPOCH"), FROM, UsersCreated)),
+			sb.S(SELECT, sb.Func("EXTRACT", sb.Raw("EPOCH"), FROM, UsersCreated)),
 			"SELECT EXTRACT(EPOCH FROM users.created_at)",
 			nil,
 		},
 		{
 			"FILTER holds a WHERE clause",
-			sb.Stm(SELECT, sb.Func("COUNT", STAR), FILTER, sb.Stm(WHERE, UsersIsPaid, AND, UsersHasTicket)),
+			sb.S(SELECT, sb.Func("COUNT", STAR), FILTER, sb.S(WHERE, UsersIsPaid, AND, UsersHasTicket)),
 			"SELECT COUNT(*) FILTER (WHERE users.paid AND users.has_ticket)",
 			nil,
 		},
 		{
 			"nested Func",
-			sb.Stm(SELECT, sb.Func("upper", sb.Func("coalesce", UsersName, sb.Lit("")))),
+			sb.S(SELECT, sb.Func("upper", sb.Func("coalesce", UsersName, sb.Lit("")))),
 			"SELECT upper(coalesce(users.name, $1))",
 			[]any{""},
 		},
 		{
 			"ANY holds a subquery",
-			sb.Stm(WHERE, UsersID, EQ, ANY, sb.Stm(SELECT, OrdersUserID, FROM, Orders)),
+			sb.S(WHERE, UsersID, EQ, ANY, sb.S(SELECT, OrdersUserID, FROM, Orders)),
 			"WHERE users.id = ANY (SELECT orders.user_id FROM orders)",
 			nil,
 		},
@@ -522,30 +547,30 @@ func TestMultiTokenArguments(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPlaceholderNumbering(t *testing.T) {
-	sub := sb.Stm(SELECT, sb.Lit(7))
+	sub := sb.S(SELECT, sb.Lit(7))
 
 	run(t, []tcase{
 		{
 			"sequential across three levels",
-			sb.Stm(sb.Lit(1), sb.Stm(sb.Lit(2), sb.Stm(sb.Lit(3))), sb.Lit(4)),
-			"$1 ($2 ($3)) $4",
+			sb.S(sb.Lit(1), sb.S(sb.Lit(2), sb.S(sb.Lit(3))), sb.Lit(4)),
+			"$1, ($2, ($3)), $4",
 			[]any{1, 2, 3, 4},
 		},
 		{
 			"Lit and Raw interleaved",
-			sb.Stm(sb.Lit("a"), sb.Raw("f($0)", "b"), sb.Lit("c")),
-			"$1 f($2) $3",
+			sb.S(sb.Lit("a"), sb.Raw("f($0)", "b"), sb.Lit("c")),
+			"$1, f($2), $3",
 			[]any{"a", "b", "c"},
 		},
 		{
 			"a Raw marker after several Lits",
-			sb.Stm(sb.Lit(1), sb.Lit(2), sb.Raw("x = $0", 3)),
-			"$1 $2 x = $3",
+			sb.S(sb.Lit(1), sb.Lit(2), sb.Raw("x = $0", 3)),
+			"$1, $2, x = $3",
 			[]any{1, 2, 3},
 		},
 		{
 			"two markers in one fragment",
-			sb.Stm(sb.Raw("a = $0 AND b = $0", 1, 2)),
+			sb.S(sb.Raw("a = $0 AND b = $0", 1, 2)),
 			"a = $1 AND b = $2",
 			[]any{1, 2},
 		},
@@ -553,13 +578,13 @@ func TestPlaceholderNumbering(t *testing.T) {
 			// The same value is a template, not a binding, so each use binds its
 			// own placeholder.
 			"the same Statement used twice",
-			sb.Stm(sub, UNION_ALL, sub),
+			sb.S(sub, UNION_ALL, sub),
 			"(SELECT $1) UNION ALL (SELECT $2)",
 			[]any{7, 7},
 		},
 		{
 			"numbering follows expansion order, not nesting depth",
-			sb.Stm(WHERE, sb.Lit(1), AND, sb.Id("x"), IN, sb.Row(sb.Lit(2), sb.Lit(3)), AND, sb.Lit(4)),
+			sb.S(WHERE, sb.Lit(1), AND, sb.Id("x"), IN, sb.S(sb.Lit(2), sb.Lit(3)), AND, sb.Lit(4)),
 			"WHERE $1 AND x IN ($2, $3) AND $4",
 			[]any{1, 2, 3, 4},
 		},
@@ -575,22 +600,22 @@ func TestPlaceholderNumbering(t *testing.T) {
 // token be left in place as nil.
 func TestEmptyRenders(t *testing.T) {
 	run(t, []tcase{
-		{"nil first in a list", sb.Stm(SELECT, nil, UsersID, UsersName), "SELECT users.id, users.name", nil},
-		{"nil in the middle", sb.Stm(SELECT, UsersID, nil, UsersName), "SELECT users.id, users.name", nil},
-		{"nil last", sb.Stm(SELECT, UsersID, UsersName, nil), "SELECT users.id, users.name", nil},
-		{"nil as the only item", sb.Stm(SELECT, nil, FROM, Users), "SELECT FROM users", nil},
-		{"nil between two operators", sb.Stm(WHERE, TRUE, AND, nil, FALSE), "WHERE TRUE AND FALSE", nil},
-		{"several nils in a row", sb.Stm(SELECT, UsersID, nil, nil, UsersName), "SELECT users.id, users.name", nil},
-		{"nil before the first token", sb.Stm(nil, SELECT, UsersID), "SELECT users.id", nil},
-		{"every token nil", sb.Stm(nil, nil), "", nil},
-		{"no tokens at all", sb.Stm(), "", nil},
-		{"an empty Id", sb.Stm(SELECT, sb.Id(""), UsersID), "SELECT users.id", nil},
-		{"an empty Kw does not change the mode", sb.Stm(SELECT, UsersID, sb.Kw(""), UsersName), "SELECT users.id, users.name", nil},
-		{"an empty Op", sb.Stm(SELECT, UsersID, sb.Op(""), UsersName), "SELECT users.id, users.name", nil},
-		{"an empty Raw", sb.Stm(SELECT, UsersID, sb.Raw(""), UsersName), "SELECT users.id, users.name", nil},
-		{"a nil inside Row", sb.Stm(sb.Row(sb.Id("a"), nil, sb.Id("b"))), "(a, b)", nil},
-		{"a nil inside Func", sb.Stm(sb.Func("f", nil, sb.Id("a"))), "f(a)", nil},
-		{"a nil inside a Row after IN", sb.Stm(WHERE, sb.Id("x"), IN, sb.Row(sb.Lit(1), nil)), "WHERE x IN ($1)", []any{1}},
+		{"nil first in a list", sb.S(SELECT, nil, UsersID, UsersName), "SELECT users.id, users.name", nil},
+		{"nil in the middle", sb.S(SELECT, UsersID, nil, UsersName), "SELECT users.id, users.name", nil},
+		{"nil last", sb.S(SELECT, UsersID, UsersName, nil), "SELECT users.id, users.name", nil},
+		{"nil as the only item", sb.S(SELECT, nil, FROM, Users), "SELECT FROM users", nil},
+		{"nil between two operators", sb.S(WHERE, TRUE, AND, nil, FALSE), "WHERE TRUE AND FALSE", nil},
+		{"several nils in a row", sb.S(SELECT, UsersID, nil, nil, UsersName), "SELECT users.id, users.name", nil},
+		{"nil before the first token", sb.S(nil, SELECT, UsersID), "SELECT users.id", nil},
+		{"every token nil", sb.S(nil, nil), "", nil},
+		{"no tokens at all", sb.S(), "", nil},
+		{"an empty Id", sb.S(SELECT, sb.Id(""), UsersID), "SELECT users.id", nil},
+		{"an empty Kw does not change the mode", sb.S(SELECT, UsersID, sb.Kw(""), UsersName), "SELECT users.id, users.name", nil},
+		{"an empty Op", sb.S(SELECT, UsersID, sb.Op(""), UsersName), "SELECT users.id, users.name", nil},
+		{"an empty Raw", sb.S(SELECT, UsersID, sb.Raw(""), UsersName), "SELECT users.id, users.name", nil},
+		{"a nil inside a group", sb.S(sb.S(sb.Id("a"), nil, sb.Id("b"))), "(a, b)", nil},
+		{"a nil inside Func", sb.S(sb.Func("f", nil, sb.Id("a"))), "f(a)", nil},
+		{"a nil inside a group after IN", sb.S(WHERE, sb.Id("x"), IN, sb.S(sb.Lit(1), nil)), "WHERE x IN ($1)", []any{1}},
 	})
 }
 
@@ -600,15 +625,15 @@ func TestEmptyRenders(t *testing.T) {
 
 func TestExcludedErrors(t *testing.T) {
 	assertErr(t,
-		sb.Stm(SET, UsersName, EQ, EXCLUDED),
+		sb.S(SET, UsersName, EQ, EXCLUDED),
 		"EXCLUDED is the last token",
 	)
 	assertErr(t,
-		sb.Stm(SET, UsersName, EQ, EXCLUDED, sb.Lit(1)),
+		sb.S(SET, UsersName, EQ, EXCLUDED, sb.Lit(1)),
 		"EXCLUDED must be followed by an Id",
 	)
 	assertErr(t,
-		sb.Stm(SET, UsersName, EQ, EXCLUDED, nil),
+		sb.S(SET, UsersName, EQ, EXCLUDED, nil),
 		"EXCLUDED must be followed by an Id",
 	)
 }
@@ -618,15 +643,14 @@ func TestErrorsPropagate(t *testing.T) {
 	bad := func() sb.Clause { return sb.Raw("a = $1") }
 
 	for name, s := range map[string]sb.Statement{
-		"in a nested Stm":     sb.Stm(SELECT, sb.Stm(bad())),
-		"in a Row":            sb.Stm(sb.Row(bad())),
-		"in a Func":           sb.Stm(SELECT, sb.Func("f", bad())),
-		"in a Row after IN":   sb.Stm(WHERE, sb.Id("x"), IN, sb.Row(bad())),
-		"in a Stm after IN":   sb.Stm(WHERE, sb.Id("x"), IN, sb.Stm(bad())),
-		"in a DISTINCT ON":    sb.Stm(SELECT, DISTINCT_ON(bad())),
-		"three levels down":   sb.Stm(sb.Stm(sb.Stm(bad()))),
-		"EXCLUDED in a nest":  sb.Stm(SELECT, sb.Stm(SET, UsersName, EQ, EXCLUDED)),
-		"after a good clause": sb.Stm(SELECT, sb.Lit(1), FROM, Users, WHERE, bad()),
+		"in a nested group":   sb.S(SELECT, sb.S(bad())),
+		"in a bare group":     sb.S(sb.S(bad())),
+		"in a Func":           sb.S(SELECT, sb.Func("f", bad())),
+		"in a group after IN": sb.S(WHERE, sb.Id("x"), IN, sb.S(bad())),
+		"in a DISTINCT ON":    sb.S(SELECT, DISTINCT_ON(bad())),
+		"three levels down":   sb.S(sb.S(sb.S(bad()))),
+		"EXCLUDED in a nest":  sb.S(SELECT, sb.S(SET, UsersName, EQ, EXCLUDED)),
+		"after a good clause": sb.S(SELECT, sb.Lit(1), FROM, Users, WHERE, bad()),
 	} {
 		t.Run(name, func(t *testing.T) {
 			sql, _, err := s.ToSQL()
@@ -651,32 +675,32 @@ func TestSpreadFragments(t *testing.T) {
 
 	run(t, []tcase{
 		{
-			"a value list spread into a Row after IN",
-			sb.Stm(SELECT, UsersID, FROM, Users, WHERE, UsersID, IN, sb.Row(ids...)),
+			"a value list spread into a group after IN",
+			sb.S(SELECT, UsersID, FROM, Users, WHERE, UsersID, IN, sb.S(ids...)),
 			"SELECT users.id FROM users WHERE users.id IN ($1, $2, $3)",
 			[]any{1, 2, 3},
 		},
 		{
-			"a subquery spread into a Stm after IN",
-			sb.Stm(WHERE, UsersID, IN, sb.Stm(subquery...)),
+			"a subquery spread into a group after IN",
+			sb.S(WHERE, UsersID, IN, sb.S(subquery...)),
 			"WHERE users.id IN (SELECT orders.user_id FROM orders WHERE orders.total > $1)",
 			[]any{100},
 		},
 		{
-			"a subquery spread into a Stm after EXISTS",
-			sb.Stm(WHERE, EXISTS, sb.Stm(subquery...)),
+			"a subquery spread into a group after EXISTS",
+			sb.S(WHERE, EXISTS, sb.S(subquery...)),
 			"WHERE EXISTS (SELECT orders.user_id FROM orders WHERE orders.total > $1)",
 			[]any{100},
 		},
 		{
-			"the same tokens spread into Stm, which parenthesises them",
-			sb.Stm(FROM, sb.Stm(subquery...), AS, sb.Id("x")),
+			"the same tokens spread into a group, which parenthesises them",
+			sb.S(FROM, sb.S(subquery...), AS, sb.Id("x")),
 			"FROM (SELECT orders.user_id FROM orders WHERE orders.total > $1) AS x",
 			[]any{100},
 		},
 		{
 			"a conditions fragment spliced into a WHERE",
-			sb.Stm(append(
+			sb.S(append(
 				append([]sb.Clause{SELECT, UsersID, FROM, Users, WHERE},
 					UsersStatus, EQ, sb.Lit("active"), AND, UsersAge, GT, sb.Lit(18)),
 				ORDER_BY, UsersID)...),
@@ -686,32 +710,32 @@ func TestSpreadFragments(t *testing.T) {
 	})
 }
 
-// sb.Stm copies its tokens, so mutating the slice afterwards does not change a
+// sb.S copies its tokens, so mutating the slice afterwards does not change a
 // statement already built from it.
-func TestStmCopiesItsTokens(t *testing.T) {
+func TestSCopiesItsTokens(t *testing.T) {
 	items := []sb.Clause{SELECT, UsersID}
-	s := sb.Stm(items...)
+	s := sb.S(items...)
 	items[1] = UsersName
 	assertSQL(t, s, "SELECT users.id")
 }
 
-// sb.Row and sb.Raw copy theirs too.
-func TestRowAndRawCopyTheirInput(t *testing.T) {
+// A nested group and sb.Raw copy theirs too.
+func TestNestedGroupAndRawCopyTheirInput(t *testing.T) {
 	items := []sb.Clause{sb.Id("a"), sb.Id("b")}
-	r := sb.Row(items...)
+	r := sb.S(items...)
 	items[0] = sb.Id("z")
-	assertSQL(t, sb.Stm(r), "(a, b)")
+	assertSQL(t, sb.S(r), "(a, b)")
 
 	vals := []any{1}
 	raw := sb.Raw("x = $0", vals...)
 	vals[0] = 99
-	assertSQL(t, sb.Stm(raw), "x = $1", 1)
+	assertSQL(t, sb.S(raw), "x = $1", 1)
 }
 
 // A statement is reusable: building it twice gives the same result, and the args
 // of the first build are not carried into the second.
 func TestBuildIsRepeatable(t *testing.T) {
-	s := sb.Stm(SELECT, UsersID, FROM, Users, WHERE, UsersID, EQ, sb.Lit(1))
+	s := sb.S(SELECT, UsersID, FROM, Users, WHERE, UsersID, EQ, sb.Lit(1))
 	for i := 0; i < 2; i++ {
 		assertSQL(t, s, "SELECT users.id FROM users WHERE users.id = $1", 1)
 	}
@@ -735,19 +759,19 @@ func TestCustomClauseIsAnOperand(t *testing.T) {
 	run(t, []tcase{
 		{
 			"takes the comma of a list item",
-			sb.Stm(SELECT, UsersID, jsonPath("{a,b}"), UsersName),
+			sb.S(SELECT, UsersID, jsonPath("{a,b}"), UsersName),
 			"SELECT users.id, users.meta #>> $1, users.name",
 			[]any{"{a,b}"},
 		},
 		{
 			"ends the item, so the next one takes a comma",
-			sb.Stm(SELECT, jsonPath("{a}"), AS, sb.Id("v"), UsersName),
+			sb.S(SELECT, jsonPath("{a}"), AS, sb.Id("v"), UsersName),
 			"SELECT users.meta #>> $1 AS v, users.name",
 			[]any{"{a}"},
 		},
 		{
 			"and numbers its own placeholder in expansion order",
-			sb.Stm(WHERE, sb.Lit(1), AND, jsonPath("{a}"), EQ, sb.Lit(2)),
+			sb.S(WHERE, sb.Lit(1), AND, jsonPath("{a}"), EQ, sb.Lit(2)),
 			"WHERE $1 AND users.meta #>> $2 = $3",
 			[]any{1, "{a}", 2},
 		},

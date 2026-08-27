@@ -21,9 +21,10 @@ const (
 	KindClause              // closes it, back to space-separated
 )
 
-// Kinded is implemented by every token that is not an operand. sb.Id,
-// sb.Statement, EXCLUDED and any Clause implemented outside these packages do
-// not implement it, and are operands: that is the common case, so it is the
+// Kinded is implemented by every token that is not an operand, and by
+// sb.Statement, which is an operand except for the prefix group of DISTINCT ON.
+// sb.Id, EXCLUDED and any Clause implemented outside these packages do not
+// implement it, and are operands: that is the common case, so it is the
 // default.
 type Kinded interface{ SQLKind() Kind }
 

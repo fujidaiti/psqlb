@@ -20,10 +20,10 @@ const (
 )
 
 func Example() {
-	stm := sb.Stm(
+	stm := sb.S(
 		SELECT, usersID, usersName,
 		FROM, users,
-		WHERE, sb.Row(usersCreated, usersID), LT, sb.Row(sb.Lit("2025-06-01"), sb.Lit(500)),
+		WHERE, sb.S(usersCreated, usersID), LT, sb.S(sb.Lit("2025-06-01"), sb.Lit(500)),
 		ORDER_BY, usersCreated, DESC, usersID, DESC, NULLS_LAST,
 		LIMIT, sb.Lit(20),
 	)

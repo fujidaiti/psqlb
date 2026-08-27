@@ -19,13 +19,13 @@ import (
     "github.com/fujidaiti/psqlb/sb"
 )
 
-sb.Stm(SELECT, UsersID, FROM, Users, WHERE, UsersAge, GTE, sb.Lit(18))
+sb.S(SELECT, UsersID, FROM, Users, WHERE, UsersAge, GTE, sb.Lit(18))
 ```
 
 - `./keywords.go` — `package psqlb`: the SQL keyword constants and `DISTINCT_ON`, nothing
   else. This is the package that is dot-imported.
 - `./sb/sb.go` — `package sb`: the implementation and the design document (its package doc
-  comment). `Clause`, the walker, `Stm`, `Row`, `Func`, `Id`, `Lit`, `Raw`, `Op`, `Kw`.
+  comment). `Clause`, the walker, `S`, `Func`, `Id`, `Lit`, `Raw`, `Op`, `Kw`.
 - `./internal/kw/kw.go` — `package kw`: the token kinds and the six keyword types, shared
   by the two packages above. Internal, so a user cannot name a keyword type and therefore
   cannot declare a keyword; `sb.Op` and `sb.Kw` are the way to write one.
@@ -38,8 +38,8 @@ The import direction is `psqlb` → `sb` → `internal/kw`. `sb` must never impo
 
 An earlier design, in which keywords that join their operands with commas were Go functions
 (`SELECT(a, b)`, `ORDER_BY(...)`), has been dropped. The current design writes the whole
-statement as one flat token list and lets `Stm` work out where the commas go, so those
-keywords are constants: `sb.Stm(SELECT, a, b, FROM, t)`.
+statement as one flat token list and lets `S` work out where the commas go, so those
+keywords are constants: `sb.S(SELECT, a, b, FROM, t)`.
 
 Nothing here has been run against a real database. The tests compare generated strings and
 bound arguments only.
@@ -75,7 +75,7 @@ them be declared with `const`.
 
 ### Parenthesisation by nesting, commas by token kind
 
-`Stm` takes the whole statement as one flat token list and a walker decides the separators.
+`S` takes the whole statement as one flat token list and a walker decides the separators.
 Every token carries a kind, and the kind is its Go type (`kw.OperandKw`, `kw.PrefixKw`,
 `kw.PostfixKw`, `kw.InfixKw`, `kw.ListKw`, `kw.ClauseKw`, all in `internal/kw`). The four expression kinds are the product of
 two independent questions — does this token begin a new list item, and does the token after
@@ -87,15 +87,17 @@ Three invariants in `walk` are load-bearing and easy to break:
 
 1. Each token is rendered *before* its separator is chosen, and an empty render is skipped
    without advancing `pos` or `m`. That is what lets a `nil` token stay in place as an
-   optional item without leaving a dangling comma.
+   optional item without leaving a dangling comma. A nested `S` never renders empty, since
+   it always emits its parentheses, so an empty group is *not* an optional token.
 2. Kinds are read from the Go type before building, which is how `SET` can strip a table
    qualifier from the name that begins each assignment without threading a mode through
    `BuildSQL`. `Id` and `kw.ExcludedKw` are intercepted by the walker, so their own
    `BuildSQL` methods are never reached from `walk`.
-3. A nested `Stm` is *always* parenthesised and `Row` always is; they run the same walker
-   and differ only in the starting mode. There is no way to nest without parentheses — to
-   reuse a fragment where parens are unwanted, keep it as a `[]Clause` and spread it.
-   `IN, Stm(inner...)` is a membership test; `IN, Row(Stm(inner...))` is a scalar
+3. A nested `S` is *always* parenthesised, empty or not, and the outermost level never is.
+   Every group starts comma-separated and a clause keyword switches it to spaces, which is
+   the same rule that governs the middle of a token list. There is no way to nest without
+   parentheses — to reuse a fragment where parens are unwanted, keep it as a `[]Clause` and
+   spread it. `IN, S(inner...)` is a membership test; `IN, S(S(inner...))` is a scalar
    comparison.
 
 `ToSQL` returns an error and nothing panics. Errors are reported only where the alternative
@@ -109,13 +111,14 @@ clause's value.
 Three rules govern the design, all stated at the top of the package doc of `sb`: the DSL
 should look like the raw SQL it produces, no special rule or keyword may be introduced that
 SQL does not have, and parentheses are explicit — if the SQL string needs them, the DSL
-must spell them with `Stm` or `Row`. Read that section before changing anything.
+must spell them with `S`, the one group there is. Read that section before changing
+anything.
 
 Every keyword is therefore a constant. `DISTINCT_ON` is the sole function, because as a
 prefix it must stay glued past its own parentheses to the first item of the SELECT list.
 `SET` stripping the table qualifier and `EXCLUDED` consuming the `Id` after it are the two
-standing exceptions, kept for usability. `TODO.md` records these and the other open
-deviations; add to it rather than resolving one silently.
+standing exceptions, kept for usability. They are recorded as `TODO:` comments where they
+are declared; add to those rather than resolving one silently.
 
 ## Conventions
 

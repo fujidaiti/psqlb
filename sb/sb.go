@@ -2,10 +2,10 @@
 //
 // A statement is written as one sequence of tokens, in the order the SQL reads:
 //
-//	sb.Stm(
+//	sb.S(
 //		SELECT, UsersID, UsersName,
 //		FROM, Users,
-//		WHERE, sb.Row(UsersCreated, UsersID), LT, sb.Row(sb.Lit("2025-06-01"), sb.Lit(500)),
+//		WHERE, sb.S(UsersCreated, UsersID), LT, sb.S(sb.Lit("2025-06-01"), sb.Lit(500)),
 //		ORDER_BY, UsersCreated, DESC, UsersID, DESC, NULLS_LAST,
 //		LIMIT, sb.Lit(20),
 //	)
@@ -17,11 +17,11 @@
 //	// LIMIT $3
 //	// args=[2025-06-01 500 20]
 //
-// Note where the commas landed. Stm joins with spaces, except that after
-// SELECT, FROM and ORDER BY it joins the items of the list with commas, and it
-// works out for itself that DESC and NULLS LAST belong to the key before them
-// rather than starting a new one. Producing that is the whole job of this
-// package, and the next section is how it is done.
+// Note where the commas landed. After SELECT, FROM and ORDER BY the items are
+// joined with commas, WHERE returns to spaces, and the package works out for
+// itself that DESC and NULLS LAST belong to the key before them rather than
+// starting a new one. Producing that is the whole job of this package, and the
+// next section is how it is done.
 //
 // # The two packages
 //
@@ -35,7 +35,7 @@
 //	)
 //
 // That is the whole reason for the split. Dot-importing one package that held
-// both would also put Stm, Row, Id, Lit and Raw into the user's file scope,
+// both would also put S, Func, Id, Lit and Raw into the user's file scope,
 // where they collide with ordinary Go names and no longer look different from
 // the SQL vocabulary.
 //
@@ -59,19 +59,24 @@
 //     behaves differently from the one it is named after.
 //
 //  3. Parentheses are explicit. If parentheses are wanted in the SQL string,
-//     something must be written for them in the DSL: Stm for a
-//     space-separated group, Row for a comma-separated one. Parentheses are
-//     never added or removed on the reader's behalf.
+//     something must be written for them in the DSL: S, which is the only
+//     group there is. Parentheses are never added or removed on the reader's
+//     behalf.
+//
+// SQL has one kind of parenthesis, and what separates the items inside it is
+// decided by the keywords, not by the parentheses. S is therefore one
+// constructor rather than two: it starts comma-separated and a clause keyword
+// switches it to spaces, exactly as in the middle of any token list.
 //
 // A keyword that SQL always follows with one parenthesised group, such as IN or
-// OVER, is a constant like any other, and the group after it is written with Row
-// or Stm. Nothing checks that the group is there: IN, Lit(1), Lit(2) compiles and
+// OVER, is a constant like any other, and the group after it is written with S.
+// Nothing checks that the group is there: IN, Lit(1), Lit(2) compiles and
 // produces "IN $1, $2", in the same way that writing "IN 'a', 'b'" in SQL is
 // accepted by the Go compiler and rejected by Postgres. Getting the parentheses
 // right is the writer's job, exactly as it is when writing SQL by hand.
 //
 // DISTINCT_ON is the one keyword that still carries its own parentheses, for a
-// reason recorded on it and in TODO.md.
+// reason recorded on it.
 //
 // There are two other standing exceptions, both to rule 2, both kept for
 // usability and both recorded where they are declared: SET strips the table
@@ -112,8 +117,8 @@
 //
 //	Shape in SQL                 | Shape in Go              | Example
 //	-----------------------------|--------------------------|-----------------------------------
-//	Space-separated group        | sb.Stm(...)              | sb.Stm(a, OR, b)  -> (a OR b)
-//	Comma-separated list         | sb.Row(...)              | sb.Row(x, y)      -> (x, y)
+//	Statement, or any group      | sb.S(...)                | sb.S(x, y)        -> (x, y)
+//	                             |                          | sb.S(WHERE, a, OR, b) -> (WHERE a OR b)
 //	Any keyword                  | Constant                 | SELECT FROM WHERE IN OVER
 //	Infix operator               | Constant or sb.Op()      | EQ LIKE, sb.Op("@>")
 //	Function call                | sb.Func(name, ...)       | sb.Func("COUNT", STAR)
@@ -126,37 +131,49 @@
 //
 // # Parentheses
 //
-// Stm and Row are the two groups, and their names say which separator you get.
-// Stm joins with spaces, Row with commas. Row is always parenthesised. Stm is
-// parenthesised whenever it is nested and bare at the outermost level, so
-// nesting in Go is nesting in SQL:
+// S is the only group. It is bare at the outermost level and parenthesised
+// whenever it is nested, so nesting in Go is nesting in SQL:
 //
-//	sb.Stm(a, sb.Stm(b, OR, c))       // a (b OR c)
-//	FROM, sb.Stm(sub), AS, sb.Id("x") // FROM (SELECT ...) AS x
+//	sb.S(a, sb.S(WHERE, b, OR, c))  // a, (WHERE b OR c)
+//	FROM, sb.S(sub), AS, sb.Id("x") // FROM (SELECT ...) AS x
 //
-// There is no way to nest a Stm without parentheses, and no automatic removal
-// of them. To reuse a fragment where parentheses are unwanted, keep it as a
+// Its items are comma-separated to begin with, and a clause keyword switches it
+// to spaces. That is the same rule that governs the middle of a token list, so
+// there is nothing extra to know about the head of a group:
+//
+//	sb.S(sb.Lit("active"), sb.Lit("trial"))     // ($1, $2)
+//	sb.S(WHERE, UsersIsPaid, OR, UsersHasTicket) // (WHERE users.paid OR users.has_ticket)
+//	sb.S(SELECT, OrdersUserID, FROM, Orders)     // (SELECT orders.user_id FROM orders)
+//
+// There is no way to nest an S without parentheses, and no automatic removal of
+// them. To reuse a fragment where parentheses are unwanted, keep it as a
 // []Clause and spread it:
 //
 //	inner := []sb.Clause{SELECT, OrdersUserID, FROM, Orders}
-//	sb.Stm(SELECT, STAR, FROM, Users, WHERE, UsersID, IN, sb.Stm(inner...))
+//	sb.S(SELECT, STAR, FROM, Users, WHERE, UsersID, IN, sb.S(inner...))
 //
-// Choosing between Stm and Row after such a keyword chooses the query, and both
-// choices are legal SQL:
+// One more level of nesting is one more pair of parentheses, and after a keyword
+// like IN that chooses the query. Both are legal SQL:
 //
-//	UsersID, IN, sb.Stm(SELECT, OrdersUserID, FROM, Orders) // IN (SELECT ...)   membership
-//	UsersID, IN, sb.Row(sb.Stm(inner...))                   // IN ((SELECT ...)) one-element list
+//	UsersID, IN, sb.S(SELECT, OrdersUserID, FROM, Orders) // IN (SELECT ...)   membership
+//	UsersID, IN, sb.S(sb.S(inner...))                     // IN ((SELECT ...)) one-element list
 //
 // The second compares against a list of one scalar subquery, so it fails at
 // execution if the subquery returns more than one row.
 //
-// Because Row, Stm and Func all run the same token walker, a multi-token item
-// needs no wrapper of its own, and a leading list keyword takes over the
-// separator:
+// Because S and Func run the same token walker, a multi-token item needs no
+// wrapper of its own:
 //
-//	sb.Row(sb.Lit("active"), sb.Lit("trial"))                       // ($1, $2)
 //	sb.Func("string_agg", UsersName, sb.Lit(","), ORDER_BY, UsersID) // string_agg(users.name, $1 ORDER BY users.id)
 //	sb.Func("COUNT", DISTINCT, UsersID)                             // COUNT(DISTINCT users.id)
+//
+// An empty group is still a pair of parentheses, since parentheses are always
+// rendered:
+//
+//	sb.Kw("GROUPING SETS"), sb.S(sb.S(UsersID), sb.S()) // GROUPING SETS ((users.id), ())
+//
+// An optional token is written nil rather than sb.S(): nil renders nothing and
+// is skipped without leaving a dangling comma, which sb.S() no longer is.
 //
 // # Values and $N
 //
@@ -183,9 +200,10 @@
 // position, so such a number is always a mistake.
 //
 // Nothing else is checked. Arity, types and syntax are the database's business.
-// An empty render is not an error either: a nil token, Stm(), and Id("") all
-// produce nothing and are skipped without leaving a dangling comma, so an
-// optional token can be left in place.
+// An empty render is not an error either: a nil token and Id("") both produce
+// nothing and are skipped without leaving a dangling comma, so an optional token
+// can be left in place. S() is not one of them: an empty group still renders its
+// parentheses.
 //
 // # Known limitations
 //
@@ -194,8 +212,8 @@
 //
 //   - A keyword's kind is fixed, so a keyword serving two roles needs two
 //     spellings. NOT is the one case: it is a prefix, correct in WHERE NOT a,
-//     NOT, EXISTS, Stm(...) and SELECT NOT flag, but wrong as a modifier inside
-//     a comma-separated list. There, write Op("NOT IN"), Row(...).
+//     NOT, EXISTS, S(...) and SELECT NOT flag, but wrong as a modifier inside
+//     a comma-separated list. There, write Op("NOT IN"), S(...).
 //
 //   - Nothing checks that a keyword needing a parenthesised group has one.
 //     IN, Lit(1) produces "IN $1", which only Postgres rejects.
@@ -203,13 +221,13 @@
 //   - A fragment that must attach to the token before it, in the middle of a
 //     comma-separated list, has no kind of its own. Fold it into one Raw.
 //
-//   - A reusable multi-token fragment cannot be a Statement where parentheses
+//   - A reusable multi-token fragment cannot be an S where parentheses
 //     are unwanted. Keep it as a []Clause and spread it.
 //
 //   - SET (a, b) = (1, 2) does not strip table qualifiers, because the token
-//     that begins the item is a Row rather than an Id. Write Id("a"), Id("b").
+//     that begins the item is a group rather than an Id. Write Id("a"), Id("b").
 //     The column lists of INSERT_INTO and ON_CONFLICT do not strip them either,
-//     since they are ordinary Rows. Only SET does, which is inconsistent; it is
+//     since they are ordinary groups. Only SET does, which is inconsistent; it is
 //     the price of keeping that one convenience.
 //
 //   - Raw performs no escaping at all. Pass only constants, or strings
@@ -243,17 +261,12 @@ type Clause interface {
 	BuildSQL(args []any) (string, []any, error)
 }
 
-// token is every token whose text is not known until build time: Lit, Raw, Row,
-// Func and DISTINCT_ON. It carries its kind explicitly
-// because it has no dedicated type to carry it.
-type token struct {
-	k     kw.Kind
-	build func([]any) (string, []any, error)
-}
+// token is a token whose text is not known until build time: Lit and Raw. Both
+// are operands, which is what kw.KindOf returns for anything that does not say
+// otherwise, so it carries no kind of its own.
+type token func([]any) (string, []any, error)
 
-func (t token) SQLKind() kw.Kind { return t.k }
-
-func (t token) BuildSQL(args []any) (string, []any, error) { return t.build(args) }
+func (t token) BuildSQL(args []any) (string, []any, error) { return t(args) }
 
 // dup is generic because Raw holds values, []any, while everything else holds
 // tokens, []Clause.
@@ -289,14 +302,17 @@ const (
 	space = " "
 )
 
-// walk renders a token list. m is the separator it starts with: spaceMode for
-// Stm, listMode for Row, Func and DISTINCT_ON. A leading list keyword overrides
-// it, which is what lets a Row hold either a list or a subquery.
+// walk renders a token list. Every group starts comma-separated, and a clause
+// keyword switches it to spaces, which is the same rule that governs the middle
+// of a list. There is one starting mode rather than two because a statement
+// never observes it: it begins with a list or a clause keyword, which sets the
+// mode on the first token.
 //
 // Each token is rendered before its separator is chosen, and a token that
 // renders empty is skipped without advancing any state. That ordering is what
 // keeps a nil token from leaving a dangling comma behind it.
-func walk(items []Clause, m mode, args []any) (string, []any, error) {
+func walk(items []Clause, args []any) (string, []any, error) {
+	m := listMode
 	var b strings.Builder
 	pos := posHead
 	inSet := false
@@ -340,14 +356,14 @@ func walk(items []Clause, m mode, args []any) (string, []any, error) {
 
 		case Statement:
 			// Nesting in Go is nesting in SQL. walk is only ever reached below
-			// the outermost level, so a Statement seen here is always nested.
+			// the outermost level, so a Statement seen here is always nested and
+			// always parenthesised, empty or not.
+			k = t.kind
 			sql, args, err = t.BuildSQL(args)
 			if err != nil {
 				return "", args, err
 			}
-			if sql != "" {
-				sql = "(" + sql + ")"
-			}
+			sql = t.name + "(" + sql + ")"
 
 		default:
 			k = kw.KindOf(items[i])
@@ -390,76 +406,56 @@ func walk(items []Clause, m mode, args []any) (string, []any, error) {
 }
 
 // ===========================================================================
-// The two groups
+// The group
 // ===========================================================================
 
-// Statement is a space-separated group of tokens.
-type Statement struct{ items []Clause }
+// Statement is a group of tokens: the whole statement at the outermost level, a
+// parenthesised group anywhere below it.
+type Statement struct {
+	// name is the text emitted immediately before the opening parenthesis: ""
+	// for S, the function name for Func and the keyword plus a space for
+	// PrefixGroup.
+	name  string
+	kind  kw.Kind
+	items []Clause
+}
 
-// Stm builds a space-separated group. It is the only way to write a statement,
-// and it is parenthesised whenever it is nested, so a subquery, a grouped
-// condition, a window specification and a CTE body are all spelled the same
-// way. Use Row where a comma-separated list is wanted.
+// S builds a group. It is the only way to write a statement and the only way to
+// write parentheses, so a subquery, a grouped condition, a row constructor, an
+// IN list, a window specification and a CTE body are all spelled the same way.
+// The keywords inside it decide whether its items are joined with commas or
+// with spaces.
 //
-//	Stm(a, Stm(b, OR, c))         // a (b OR c)
-//	Stm(SELECT, UsersID, UsersName) // SELECT users.id, users.name
-func Stm(items ...Clause) Statement { return Statement{items: dup(items)} }
+//	S(SELECT, UsersID, UsersName)      // SELECT users.id, users.name
+//	S(a, S(WHERE, b, OR, c))           // a (WHERE b OR c)
+//	S(Lit("active"), Lit("trial"))     // ($1, $2)
+func S(items ...Clause) Statement { return Statement{items: dup(items)} }
+
+func (s Statement) SQLKind() kw.Kind { return s.kind }
 
 func (s Statement) BuildSQL(args []any) (string, []any, error) {
-	return walk(s.items, spaceMode, args)
+	return walk(s.items, args)
 }
 
 // ToSQL assembles the whole statement. No parentheses wrap the outermost level.
 func (s Statement) ToSQL() (string, []any, error) { return s.BuildSQL(nil) }
 
-// paren renders items in list mode inside parentheses, with kw in front of them
-// if there is one. Row and DISTINCT_ON are its only two callers.
-func paren(keyword string, k kw.Kind, items []Clause) Clause {
-	cp := dup(items)
-	return token{k: k, build: func(args []any) (string, []any, error) {
-		s, args, err := walk(cp, listMode, args)
-		if err != nil {
-			return "", args, err
-		}
-		if keyword == "" {
-			return "(" + s + ")", args, nil
-		}
-		return keyword + " (" + s + ")", args, nil
-	}}
-}
-
-// PrefixGroup renders items as a comma-separated parenthesised list with the
-// given keyword in front of it, as a prefix token. DISTINCT_ON is its only
-// caller, and it is exported for that reason alone.
+// PrefixGroup renders items as a parenthesised group with the given keyword in
+// front of it, as a prefix token. DISTINCT_ON is its only caller, and it is
+// exported for that reason alone.
 func PrefixGroup(keyword string, items ...Clause) Clause {
-	return paren(keyword, kw.KindPrefix, items)
+	return Statement{name: keyword + " ", kind: kw.KindPrefix, items: dup(items)}
 }
-
-// Row is a comma-separated parenthesised list. A row constructor, a row of
-// VALUES and the list in an IN are all spelled the same way.
-//
-//	Row(Lit("bob"), Lit(42))   // ($1, $2)
-//	Row(UsersCreated, UsersID) // (users.created_at, users.id)
-//
-// Row() renders "()", which GROUPING SETS accepts.
-func Row(items ...Clause) Clause { return paren("", kw.KindOperand, items) }
 
 // Func covers any SQL function, which is what spares the package from growing
-// separate COUNT, SUM and COALESCE helpers. Its arguments are comma-separated,
-// and an argument spanning several tokens needs no wrapper.
+// separate COUNT, SUM and COALESCE helpers. An argument spanning several tokens
+// needs no wrapper.
 //
 //	Func("COUNT", STAR)                                       // COUNT(*)
 //	Func("COUNT", DISTINCT, UsersID)                          // COUNT(DISTINCT users.id)
 //	Func("string_agg", UsersName, Lit(","), ORDER_BY, UsersID) // string_agg(users.name, $1 ORDER BY users.id)
 func Func(name string, items ...Clause) Clause {
-	cp := dup(items)
-	return token{k: kw.KindOperand, build: func(args []any) (string, []any, error) {
-		s, args, err := walk(cp, listMode, args)
-		if err != nil {
-			return "", args, err
-		}
-		return name + "(" + s + ")", args, nil
-	}}
+	return Statement{name: name, items: dup(items)}
 }
 
 // ===========================================================================
@@ -476,12 +472,12 @@ func (i Id) BuildSQL(args []any) (string, []any, error) { return string(i), args
 // enters a statement, since every position in the DSL takes a Clause and a
 // plain Go value is not one.
 //
-//	Stm(WHERE, UsersAge, GTE, Lit(18)) // WHERE users.age >= $1
+//	S(WHERE, UsersAge, GTE, Lit(18)) // WHERE users.age >= $1
 func Lit(v any) Clause {
-	return token{k: kw.KindOperand, build: func(args []any) (string, []any, error) {
+	return token(func(args []any) (string, []any, error) {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args)), args, nil
-	}}
+	})
 }
 
 // Raw is an operand written by hand: the escape hatch for an expression this
@@ -515,7 +511,7 @@ func Raw(sql string, vals ...any) Clause {
 		err = fmt.Errorf("psqlb: Raw: fragment has %d $0 marker(s) but %d value(s): %s",
 			len(parts)-1, len(cp), sql)
 	}
-	return token{k: kw.KindOperand, build: func(args []any) (string, []any, error) {
+	return token(func(args []any) (string, []any, error) {
 		if err != nil {
 			return "", args, err
 		}
@@ -527,7 +523,7 @@ func Raw(sql string, vals ...any) Clause {
 			b.WriteString(part)
 		}
 		return b.String(), args, nil
-	}}
+	})
 }
 
 func splitMarkers(sql string) ([]string, error) {
@@ -565,7 +561,7 @@ func splitMarkers(sql string) ([]string, error) {
 // Op is an infix operator written by hand. It exists because operators are not
 // a fixed list: extensions add their own.
 //
-//	Stm(WHERE, UsersMeta, Op("@>"), Lit(`{"vip":true}`)) // WHERE users.meta @> $1
+//	S(WHERE, UsersMeta, Op("@>"), Lit(`{"vip":true}`)) // WHERE users.meta @> $1
 func Op(sql string) Clause { return kw.InfixKw(sql) }
 
 // Kw is a clause keyword written by hand, for a clause the package does not
