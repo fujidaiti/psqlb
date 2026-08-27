@@ -120,29 +120,29 @@ func TestCommaPlacement(t *testing.T) {
 			nil,
 		},
 		{
-			// IN is a postfix, so it does not take the comma and the item after
-			// it does.
+			// IN is an infix, so the Row after it does not take the comma and
+			// the item after the Row does.
 			"in mid-list",
-			Stm(SELECT, Id("x"), IN(Lit(1)), Id("y"), FROM, Users),
+			Stm(SELECT, Id("x"), IN, Row(Lit(1)), Id("y"), FROM, Users),
 			"SELECT x IN ($1), y FROM users",
 			[]any{1},
 		},
 		{
-			// EXISTS is an operand, so it does take the comma.
+			// EXISTS is a prefix, so it begins an item and does take the comma.
 			"exists mid-list",
-			Stm(SELECT, Id("x"), EXISTS(SELECT, Lit(1)), Id("y")),
+			Stm(SELECT, Id("x"), EXISTS, Stm(SELECT, Lit(1)), Id("y")),
 			"SELECT x, EXISTS (SELECT $1), y",
 			[]any{1},
 		},
 		{
 			"not exists mid-list",
-			Stm(SELECT, Id("x"), NOT, EXISTS(SELECT, Lit(1))),
+			Stm(SELECT, Id("x"), NOT, EXISTS, Stm(SELECT, Lit(1))),
 			"SELECT x, NOT EXISTS (SELECT $1)",
 			[]any{1},
 		},
 		{
 			"not exists in space mode",
-			Stm(WHERE, NOT, EXISTS(SELECT, Lit(1))),
+			Stm(WHERE, NOT, EXISTS, Stm(SELECT, Lit(1))),
 			"WHERE NOT EXISTS (SELECT $1)",
 			[]any{1},
 		},
@@ -169,10 +169,10 @@ func TestCommaPlacement(t *testing.T) {
 		},
 		{
 			"group by then having",
-			Stm(SELECT, UsersID, FUNC("COUNT", STAR),
+			Stm(SELECT, UsersID, Func("COUNT", STAR),
 				FROM, Users,
 				GROUP_BY, UsersID,
-				HAVING, FUNC("COUNT", STAR), GT, Lit(1)),
+				HAVING, Func("COUNT", STAR), GT, Lit(1)),
 			"SELECT users.id, COUNT(*) FROM users GROUP BY users.id HAVING COUNT(*) > $1",
 			[]any{1},
 		},
@@ -234,8 +234,8 @@ func TestModes(t *testing.T) {
 			nil,
 		},
 		{
-			"FUNC starts in list mode",
-			Stm(FUNC("f", Id("a"), Id("b"))),
+			"Func starts in list mode",
+			Stm(Func("f", Id("a"), Id("b"))),
 			"f(a, b)",
 			nil,
 		},
@@ -246,23 +246,23 @@ func TestModes(t *testing.T) {
 			nil,
 		},
 		{
-			// A leading list keyword takes over the separator of a
-			// paren-emitting function, which is what lets IN hold a subquery.
+			// A leading list keyword takes over the separator, which is what
+			// lets a Row hold a subquery.
 			"leading list keyword overrides list mode",
-			Stm(WHERE, Id("x"), IN(SELECT, UsersID, UsersName, FROM, Users)),
+			Stm(WHERE, Id("x"), IN, Row(SELECT, UsersID, UsersName, FROM, Users)),
 			"WHERE x IN (SELECT users.id, users.name FROM users)",
 			nil,
 		},
 		{
 			"OVER holds a space-separated specification",
-			Stm(SELECT, FUNC("SUM", Lit(1)), OVER(PARTITION_BY, UsersID, ORDER_BY, UsersCreated)),
+			Stm(SELECT, Func("SUM", Lit(1)), OVER, Stm(PARTITION_BY, UsersID, ORDER_BY, UsersCreated)),
 			"SELECT SUM($1) OVER (PARTITION BY users.id ORDER BY users.created_at)",
 			[]any{1},
 		},
 		{
-			"OVER holds a window name",
-			Stm(SELECT, FUNC("SUM", Lit(1)), OVER(Id("w"))),
-			"SELECT SUM($1) OVER (w)",
+			"OVER holds a window name, which needs no parentheses",
+			Stm(SELECT, Func("SUM", Lit(1)), OVER, Id("w")),
+			"SELECT SUM($1) OVER w",
 			[]any{1},
 		},
 	})
@@ -284,7 +284,7 @@ func TestBareNamePositions(t *testing.T) {
 			// Only the name that begins the item is stripped, so a function call
 			// on the right-hand side keeps its qualifier.
 			"qualified right-hand side survives",
-			Stm(UPDATE, Users, SET, UsersStatus, EQ, FUNC("upper", UsersName)),
+			Stm(UPDATE, Users, SET, UsersStatus, EQ, Func("upper", UsersName)),
 			"UPDATE users SET status = upper(users.name)",
 			nil,
 		},
@@ -328,31 +328,31 @@ func TestBareNamePositions(t *testing.T) {
 		},
 		{
 			"INSERT INTO with columns",
-			Stm(INSERT_INTO(Users, UsersName, UsersEmail)),
+			Stm(INSERT_INTO, Users, Row(Id("name"), Id("email"))),
 			"INSERT INTO users (name, email)",
 			nil,
 		},
 		{
-			"INSERT INTO with no columns emits no parentheses",
-			Stm(INSERT_INTO(Users), VALUES, Row(Lit(1))),
+			"INSERT INTO with no columns",
+			Stm(INSERT_INTO, Users, VALUES, Row(Lit(1))),
 			"INSERT INTO users VALUES ($1)",
 			[]any{1},
 		},
 		{
 			"ON CONFLICT with one column",
-			Stm(ON_CONFLICT(UsersEmail), DO_NOTHING),
+			Stm(ON_CONFLICT, Row(Id("email")), DO_NOTHING),
 			"ON CONFLICT (email) DO NOTHING",
 			nil,
 		},
 		{
 			"ON CONFLICT with several columns",
-			Stm(ON_CONFLICT(UsersName, UsersEmail), DO_NOTHING),
+			Stm(ON_CONFLICT, Row(Id("name"), Id("email")), DO_NOTHING),
 			"ON CONFLICT (name, email) DO NOTHING",
 			nil,
 		},
 		{
-			"ON CONFLICT with no columns emits no parentheses",
-			Stm(ON_CONFLICT(), DO_NOTHING),
+			"ON CONFLICT with no columns",
+			Stm(ON_CONFLICT, DO_NOTHING),
 			"ON CONFLICT DO NOTHING",
 			nil,
 		},
@@ -400,22 +400,22 @@ func TestNestingAndParens(t *testing.T) {
 			[]any{1, 2},
 		},
 		{
-			"a Statement as a FUNC argument keeps both pairs",
-			Stm(FUNC("coalesce", sub, Lit(0))),
+			"a Statement as a Func argument keeps both pairs",
+			Stm(Func("coalesce", sub, Lit(0))),
 			"coalesce((SELECT $1), $2)",
 			[]any{1, 0},
 		},
 		{
-			// Nesting adds parentheses here as everywhere, which makes this a
-			// comparison against a scalar subquery rather than a membership test.
-			"a Statement as the sole content of IN is double-wrapped",
-			Stm(WHERE, Id("x"), IN(sub)),
+			// A Row holding a nested Statement is a one-element list containing
+			// a scalar subquery, not a membership test.
+			"a Statement inside a Row after IN is double-wrapped",
+			Stm(WHERE, Id("x"), IN, Row(sub)),
 			"WHERE x IN ((SELECT $1))",
 			[]any{1},
 		},
 		{
-			"the same tokens spread into IN are a membership test",
-			Stm(WHERE, Id("x"), IN(SELECT, Lit(1))),
+			"the same tokens in a Stm after IN are a membership test",
+			Stm(WHERE, Id("x"), IN, Stm(SELECT, Lit(1))),
 			"WHERE x IN (SELECT $1)",
 			[]any{1},
 		},
@@ -444,8 +444,8 @@ func TestNestingAndParens(t *testing.T) {
 			nil,
 		},
 		{
-			"empty FUNC renders a pair",
-			Stm(SELECT, FUNC("f")),
+			"empty Func renders a pair",
+			Stm(SELECT, Func("f")),
 			"SELECT f()",
 			nil,
 		},
@@ -471,44 +471,44 @@ func TestNestingAndParens(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Multi-token arguments of a paren-emitting function
+// Multi-token arguments of a parenthesised group
 // ---------------------------------------------------------------------------
 
 func TestMultiTokenArguments(t *testing.T) {
 	run(t, []tcase{
 		{
 			"string_agg with ORDER BY",
-			Stm(SELECT, FUNC("string_agg", UsersName, Lit(","), ORDER_BY, UsersID)),
+			Stm(SELECT, Func("string_agg", UsersName, Lit(","), ORDER_BY, UsersID)),
 			"SELECT string_agg(users.name, $1 ORDER BY users.id)",
 			[]any{","},
 		},
 		{
 			"COUNT DISTINCT",
-			Stm(SELECT, FUNC("COUNT", DISTINCT, UsersID)),
+			Stm(SELECT, Func("COUNT", DISTINCT, UsersID)),
 			"SELECT COUNT(DISTINCT users.id)",
 			nil,
 		},
 		{
 			"EXTRACT",
-			Stm(SELECT, FUNC("EXTRACT", Raw("EPOCH"), FROM, UsersCreated)),
+			Stm(SELECT, Func("EXTRACT", Raw("EPOCH"), FROM, UsersCreated)),
 			"SELECT EXTRACT(EPOCH FROM users.created_at)",
 			nil,
 		},
 		{
 			"FILTER holds a WHERE clause",
-			Stm(SELECT, FUNC("COUNT", STAR), FILTER(WHERE, UsersIsPaid, AND, UsersHasTicket)),
+			Stm(SELECT, Func("COUNT", STAR), FILTER, Stm(WHERE, UsersIsPaid, AND, UsersHasTicket)),
 			"SELECT COUNT(*) FILTER (WHERE users.paid AND users.has_ticket)",
 			nil,
 		},
 		{
-			"nested FUNC",
-			Stm(SELECT, FUNC("upper", FUNC("coalesce", UsersName, Lit("")))),
+			"nested Func",
+			Stm(SELECT, Func("upper", Func("coalesce", UsersName, Lit("")))),
 			"SELECT upper(coalesce(users.name, $1))",
 			[]any{""},
 		},
 		{
 			"ANY holds a subquery",
-			Stm(WHERE, UsersID, EQ, ANY(SELECT, OrdersUserID, FROM, Orders)),
+			Stm(WHERE, UsersID, EQ, ANY, Stm(SELECT, OrdersUserID, FROM, Orders)),
 			"WHERE users.id = ANY (SELECT orders.user_id FROM orders)",
 			nil,
 		},
@@ -557,7 +557,7 @@ func TestPlaceholderNumbering(t *testing.T) {
 		},
 		{
 			"numbering follows expansion order, not nesting depth",
-			Stm(WHERE, Lit(1), AND, Id("x"), IN(Lit(2), Lit(3)), AND, Lit(4)),
+			Stm(WHERE, Lit(1), AND, Id("x"), IN, Row(Lit(2), Lit(3)), AND, Lit(4)),
 			"WHERE $1 AND x IN ($2, $3) AND $4",
 			[]any{1, 2, 3, 4},
 		},
@@ -587,8 +587,8 @@ func TestEmptyRenders(t *testing.T) {
 		{"an empty Op", Stm(SELECT, UsersID, Op(""), UsersName), "SELECT users.id, users.name", nil},
 		{"an empty Raw", Stm(SELECT, UsersID, Raw(""), UsersName), "SELECT users.id, users.name", nil},
 		{"a nil inside Row", Stm(Row(Id("a"), nil, Id("b"))), "(a, b)", nil},
-		{"a nil inside FUNC", Stm(FUNC("f", nil, Id("a"))), "f(a)", nil},
-		{"a nil inside IN", Stm(WHERE, Id("x"), IN(Lit(1), nil)), "WHERE x IN ($1)", []any{1}},
+		{"a nil inside Func", Stm(Func("f", nil, Id("a"))), "f(a)", nil},
+		{"a nil inside a Row after IN", Stm(WHERE, Id("x"), IN, Row(Lit(1), nil)), "WHERE x IN ($1)", []any{1}},
 	})
 }
 
@@ -618,10 +618,10 @@ func TestErrorsPropagate(t *testing.T) {
 	for name, s := range map[string]Statement{
 		"in a nested Stm":     Stm(SELECT, Stm(bad())),
 		"in a Row":            Stm(Row(bad())),
-		"in a FUNC":           Stm(SELECT, FUNC("f", bad())),
-		"in an IN":            Stm(WHERE, Id("x"), IN(bad())),
-		"in an EXISTS":        Stm(WHERE, EXISTS(bad())),
-		"in an OVER":          Stm(SELECT, FUNC("f"), OVER(bad())),
+		"in a Func":           Stm(SELECT, Func("f", bad())),
+		"in a Row after IN":   Stm(WHERE, Id("x"), IN, Row(bad())),
+		"in a Stm after IN":   Stm(WHERE, Id("x"), IN, Stm(bad())),
+		"in a DISTINCT ON":    Stm(SELECT, DISTINCT_ON(bad())),
 		"three levels down":   Stm(Stm(Stm(bad()))),
 		"EXCLUDED in a nest":  Stm(SELECT, Stm(SET, UsersName, EQ, EXCLUDED)),
 		"after a good clause": Stm(SELECT, Lit(1), FROM, Users, WHERE, bad()),
@@ -649,20 +649,20 @@ func TestSpreadFragments(t *testing.T) {
 
 	run(t, []tcase{
 		{
-			"a value list spread into IN",
-			Stm(SELECT, UsersID, FROM, Users, WHERE, UsersID, IN(ids...)),
+			"a value list spread into a Row after IN",
+			Stm(SELECT, UsersID, FROM, Users, WHERE, UsersID, IN, Row(ids...)),
 			"SELECT users.id FROM users WHERE users.id IN ($1, $2, $3)",
 			[]any{1, 2, 3},
 		},
 		{
-			"a subquery spread into IN",
-			Stm(WHERE, UsersID, IN(subquery...)),
+			"a subquery spread into a Stm after IN",
+			Stm(WHERE, UsersID, IN, Stm(subquery...)),
 			"WHERE users.id IN (SELECT orders.user_id FROM orders WHERE orders.total > $1)",
 			[]any{100},
 		},
 		{
-			"a subquery spread into EXISTS",
-			Stm(WHERE, EXISTS(subquery...)),
+			"a subquery spread into a Stm after EXISTS",
+			Stm(WHERE, EXISTS, Stm(subquery...)),
 			"WHERE EXISTS (SELECT orders.user_id FROM orders WHERE orders.total > $1)",
 			[]any{100},
 		},

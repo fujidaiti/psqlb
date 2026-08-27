@@ -47,10 +47,20 @@
 //     space-separated group, Row for a comma-separated one. Parentheses are
 //     never added or removed on the reader's behalf.
 //
-// The exception to rule 3 is a keyword that SQL itself always follows with one
-// parenthesised group, such as IN or OVER. There the parentheses belong to the
-// keyword rather than to the expression inside them, so the function call that
-// spells the keyword also spells its parentheses.
+// A keyword that SQL always follows with one parenthesised group, such as IN or
+// OVER, is a constant like any other, and the group after it is written with Row
+// or Stm. Nothing checks that the group is there: IN, Lit(1), Lit(2) compiles and
+// produces "IN $1, $2", in the same way that writing "IN 'a', 'b'" in SQL is
+// accepted by the Go compiler and rejected by Postgres. Getting the parentheses
+// right is the writer's job, exactly as it is when writing SQL by hand.
+//
+// DISTINCT_ON is the one keyword that still carries its own parentheses, for a
+// reason recorded on it and in TODO.md.
+//
+// There are two other standing exceptions, both to rule 2, both kept for
+// usability and both recorded where they are declared: SET strips the table
+// qualifier from the name that begins each assignment, and EXCLUDED consumes the
+// Id after it.
 //
 // # Token kinds
 //
@@ -88,17 +98,15 @@
 //	-----------------------------|-------------------|------------------------------------
 //	Space-separated group        | Stm(...)          | Stm(a, OR, b)      -> (a OR b)
 //	Comma-separated list         | Row(...)          | Row(x, y)          -> (x, y)
-//	Keyword with mandatory ( )   | Function          | IN(...) EXISTS(...) OVER(...)
-//	Any other keyword            | Constant          | SELECT FROM WHERE ORDER_BY
+//	Any keyword                  | Constant          | SELECT FROM WHERE IN OVER
 //	Infix operator               | Constant or Op()  | EQ LIKE, Op("@>")
-//	Function call                | FUNC(name, ...)   | FUNC("COUNT", STAR)
+//	Function call                | Func(name, ...)   | Func("COUNT", STAR)
 //	Identifier                   | Id constant       | UsersID
 //	Value                        | Lit()             | Lit(42)
 //	Anything unmodelled          | Raw() Op() Kw()   | Raw("x = $0", 1)
 //
-// A keyword is a function exactly when SQL always follows it with one
-// parenthesised group, or when it takes a bare name rather than an expression.
-// Everything else is a constant.
+// Every keyword is a constant. DISTINCT_ON is the sole function, for the reason
+// recorded on it.
 //
 // # Parentheses
 //
@@ -115,23 +123,24 @@
 // []Clause and spread it:
 //
 //	inner := []Clause{SELECT, OrdersUserID, FROM, Orders}
-//	Stm(WHERE, UsersID, IN(inner...))    // WHERE users.id IN (SELECT orders.user_id FROM orders)
-//	Stm(WHERE, UsersID, IN(Stm(inner...))) // WHERE users.id IN ((SELECT orders.user_id FROM orders))
+//	Stm(SELECT, STAR, FROM, Users, WHERE, UsersID, IN, Stm(inner...))
 //
-// Both compile and both run, but they are different queries. The first is a
-// membership test. The second compares against a one-element list holding a
-// scalar subquery, so it fails at execution if the subquery returns more than
-// one row. Spread for membership.
+// Choosing between Stm and Row after such a keyword chooses the query, and both
+// choices are legal SQL:
 //
-// Because Row and the paren-emitting keyword functions run the same token
-// walker, a multi-token item needs no wrapper. A leading list keyword takes
-// over the separator, which is what lets one function serve both a list and a
-// subquery:
+//	UsersID, IN, Stm(SELECT, OrdersUserID, FROM, Orders) // IN (SELECT ...)     membership
+//	UsersID, IN, Row(Stm(inner...))                      // IN ((SELECT ...))   one-element list
 //
-//	IN(Lit("active"), Lit("trial"))                          // IN ($1, $2)
-//	IN(SELECT, OrdersUserID, FROM, Orders)                   // IN (SELECT orders.user_id FROM orders)
-//	FUNC("string_agg", UsersName, Lit(","), ORDER_BY, UsersID) // string_agg(users.name, $1 ORDER BY users.id)
-//	FUNC("COUNT", DISTINCT, UsersID)                         // COUNT(DISTINCT users.id)
+// The second compares against a list of one scalar subquery, so it fails at
+// execution if the subquery returns more than one row.
+//
+// Because Row, Stm and Func all run the same token walker, a multi-token item
+// needs no wrapper of its own, and a leading list keyword takes over the
+// separator:
+//
+//	Row(Lit("active"), Lit("trial"))                           // ($1, $2)
+//	Func("string_agg", UsersName, Lit(","), ORDER_BY, UsersID) // string_agg(users.name, $1 ORDER BY users.id)
+//	Func("COUNT", DISTINCT, UsersID)                           // COUNT(DISTINCT users.id)
 //
 // # Values and $N
 //
@@ -169,8 +178,11 @@
 //
 //   - A keyword's kind is fixed, so a keyword serving two roles needs two
 //     spellings. NOT is the one case: it is a prefix, correct in WHERE NOT a,
-//     NOT, EXISTS(...) and SELECT NOT flag, but wrong as a modifier inside a
-//     comma-separated list. There, write Op("NOT IN"), Row(...).
+//     NOT, EXISTS, Stm(...) and SELECT NOT flag, but wrong as a modifier inside
+//     a comma-separated list. There, write Op("NOT IN"), Row(...).
+//
+//   - Nothing checks that a keyword needing a parenthesised group has one.
+//     IN, Lit(1) produces "IN $1", which only Postgres rejects.
 //
 //   - A fragment that must attach to the token before it, in the middle of a
 //     comma-separated list, has no kind of its own. Fold it into one Raw.
@@ -180,6 +192,9 @@
 //
 //   - SET (a, b) = (1, 2) does not strip table qualifiers, because the token
 //     that begins the item is a Row rather than an Id. Write Id("a"), Id("b").
+//     The column lists of INSERT_INTO and ON_CONFLICT do not strip them either,
+//     since they are ordinary Rows. Only SET does, which is inconsistent; it is
+//     the price of keeping that one convenience.
 //
 //   - Raw performs no escaping at all. Pass only constants, or strings
 //     assembled in code.
@@ -277,7 +292,7 @@ func (k setKw) BuildSQL(args []any) (string, []any, error)     { return string(k
 func (k excludedKw) BuildSQL(args []any) (string, []any, error) { return string(k), args, nil }
 
 // token is every token whose text is not known until build time: Lit, Raw, Row,
-// FUNC and the paren-emitting keyword functions. It carries its kind explicitly
+// Func and DISTINCT_ON. It carries its kind explicitly
 // because it has no dedicated type to carry it.
 type token struct {
 	k     kind
@@ -323,9 +338,8 @@ const (
 )
 
 // walk renders a token list. m is the separator it starts with: spaceMode for
-// Stm, listMode for Row, FUNC and the paren-emitting keyword functions. A
-// leading list keyword overrides it, which is what lets IN(...) hold either a
-// list or a subquery.
+// Stm, listMode for Row, Func and DISTINCT_ON. A leading list keyword overrides
+// it, which is what lets a Row hold either a list or a subquery.
 //
 // Each token is rendered before its separator is chosen, and a token that
 // renders empty is skipped without advancing any state. That ordering is what
@@ -447,7 +461,7 @@ func (s Statement) BuildSQL(args []any) (string, []any, error) {
 func (s Statement) ToSQL() (string, []any, error) { return s.BuildSQL(nil) }
 
 // paren renders items in list mode inside parentheses, with kw in front of them
-// if there is one. Every parenthesised construct in the package goes through it.
+// if there is one. Row and DISTINCT_ON are its only two callers.
 func paren(kw string, k kind, items []Clause) Clause {
 	cp := dup(items)
 	return token{k: k, build: func(args []any) (string, []any, error) {
@@ -471,14 +485,14 @@ func paren(kw string, k kind, items []Clause) Clause {
 // Row() renders "()", which GROUPING SETS accepts.
 func Row(items ...Clause) Clause { return paren("", kindOperand, items) }
 
-// FUNC covers any SQL function, which is what spares the package from growing
+// Func covers any SQL function, which is what spares the package from growing
 // separate COUNT, SUM and COALESCE helpers. Its arguments are comma-separated,
 // and an argument spanning several tokens needs no wrapper.
 //
-//	FUNC("COUNT", STAR)                                       // COUNT(*)
-//	FUNC("COUNT", DISTINCT, UsersID)                          // COUNT(DISTINCT users.id)
-//	FUNC("string_agg", UsersName, Lit(","), ORDER_BY, UsersID) // string_agg(users.name, $1 ORDER BY users.id)
-func FUNC(name string, items ...Clause) Clause {
+//	Func("COUNT", STAR)                                       // COUNT(*)
+//	Func("COUNT", DISTINCT, UsersID)                          // COUNT(DISTINCT users.id)
+//	Func("string_agg", UsersName, Lit(","), ORDER_BY, UsersID) // string_agg(users.name, $1 ORDER BY users.id)
+func Func(name string, items ...Clause) Clause {
 	cp := dup(items)
 	return token{k: kindOperand, build: func(args []any) (string, []any, error) {
 		s, args, err := walk(cp, listMode, args)
@@ -624,8 +638,13 @@ const (
 // begins each assignment, since "SET users.status = ..." is not legal. The
 // right-hand side is left alone.
 //
-//	Stm(UPDATE, Users, SET, UsersStatus, EQ, FUNC("upper", UsersName))
+//	Stm(UPDATE, Users, SET, UsersStatus, EQ, Func("upper", UsersName))
 //	// UPDATE users SET status = upper(users.name)
+//
+// This is a deliberate exception to the second golden rule: SQL has no such
+// rule, and the DSL text differs from the SQL text. It is kept because writing
+// Id("status") for every assignment is the common case and the qualified
+// constant is the one already at hand.
 const SET setKw = "SET"
 
 // Clause keywords close a comma-separated list and return to space separation.
@@ -638,6 +657,20 @@ const (
 
 	UPDATE      clauseKw = "UPDATE"
 	DELETE_FROM clauseKw = "DELETE FROM"
+
+	// INSERT_INTO is followed by the table and, if the columns are named, by a
+	// Row of them. The names must be bare, since "INSERT INTO users
+	// (users.name)" is not legal, so write Id("name") rather than UsersName.
+	//
+	//	INSERT_INTO, Users, Row(Id("name"), Id("email")), VALUES, Row(...)
+	//	// INSERT INTO users (name, email) VALUES (...)
+	INSERT_INTO clauseKw = "INSERT INTO"
+
+	// ON_CONFLICT takes a Row naming the conflict target, or nothing at all.
+	//
+	//	ON_CONFLICT, Row(Id("email")), DO_UPDATE, SET, ...
+	//	ON_CONFLICT, DO_NOTHING
+	ON_CONFLICT clauseKw = "ON CONFLICT"
 
 	JOIN       clauseKw = "JOIN"
 	LEFT_JOIN  clauseKw = "LEFT JOIN"
@@ -659,6 +692,9 @@ const (
 	AND infixKw = "AND"
 	OR  infixKw = "OR"
 
+	// TODO: see TODO.md. EQ, NE, GTE and the rest are not SQL spellings, which
+	// is a deviation from the first golden rule. Go identifiers cannot be "="
+	// or ">=", so the alternative is Op(">=") everywhere.
 	EQ    infixKw = "="
 	NE    infixKw = "<>"
 	GT    infixKw = ">"
@@ -730,54 +766,46 @@ const (
 // EXCLUDED reads the name after it, so EXCLUDED, UsersName renders
 // EXCLUDED.name. The qualifier is stripped, since only the column name is legal
 // there.
+//
+// TODO: see TODO.md. This breaks the second golden rule twice over: two tokens
+// produce one operand, and the name is rewritten. SQL has no such rule;
+// EXCLUDED.name is an ordinary qualified name.
 const EXCLUDED excludedKw = "EXCLUDED"
 
-// ===========================================================================
-// Keyword functions — the ones SQL always follows with one parenthesised group
-// ===========================================================================
-
-// IN takes either a list or a subquery. Spread a []Clause into it for a
-// membership test; passing a single Stm nests it, which is a scalar comparison.
+// The keywords SQL always follows with one parenthesised group are constants
+// like any other, and the group after them is written with Row or Stm. They are
+// infixes, because each sits between the expression before it and that group:
 //
-//	IN(Lit("active"), Lit("trial"))         // IN ($1, $2)
-//	IN(SELECT, OrdersUserID, FROM, Orders)  // IN (SELECT orders.user_id FROM orders)
+//	UsersStatus, IN, Row(Lit("active"), Lit("trial"))     // users.status IN ($1, $2)
+//	UsersID, IN, Stm(SELECT, OrdersUserID, FROM, Orders)  // users.id IN (SELECT ...)
+//	UsersID, EQ, ANY, Stm(SELECT, OrdersUserID, FROM, Orders)
+//	Func("COUNT", STAR), FILTER, Stm(WHERE, UsersIsPaid)  // COUNT(*) FILTER (WHERE users.paid)
+//	Func("SUM", OrdersTotal), OVER, Stm(PARTITION_BY, OrdersUserID)
+//	Func("SUM", OrdersTotal), OVER, Id("w")               // SUM(...) OVER w
+const (
+	IN     infixKw = "IN"
+	ANY    infixKw = "ANY"
+	FILTER infixKw = "FILTER"
+	OVER   infixKw = "OVER"
+)
+
+// EXISTS is a prefix rather than an infix, because it has no left operand.
 //
-// It is a postfix: it swallows its own right operand, so relative to the tokens
-// around it the whole of IN(...) attaches to the expression before it and ends
-// the item. The same is true of FILTER and OVER.
-func IN(items ...Clause) Clause { return paren("IN", kindPostfix, items) }
+//	WHERE, NOT, EXISTS, Stm(SELECT, Lit(1), FROM, Orders)
+const EXISTS prefixKw = "EXISTS"
 
-// FILTER restricts an aggregate. Its contents are a WHERE clause.
-//
-//	FUNC("COUNT", STAR), FILTER(WHERE, UsersIsPaid) // COUNT(*) FILTER (WHERE users.paid)
-func FILTER(items ...Clause) Clause { return paren("FILTER", kindPostfix, items) }
-
-// OVER carries a window specification, or the name of one.
-//
-//	OVER(PARTITION_BY, OrdersUserID, ORDER_BY, OrdersCreated)
-//	// OVER (PARTITION BY orders.user_id ORDER BY orders.created_at)
-func OVER(items ...Clause) Clause { return paren("OVER", kindPostfix, items) }
-
-// EXISTS holds a subquery. It is an operand: it begins an item of its own, so
-// NOT, EXISTS(...) takes no comma and SELECT, x, EXISTS(...) does.
-func EXISTS(items ...Clause) Clause { return paren("EXISTS", kindOperand, items) }
-
-// ANY holds a subquery or an array expression. "= ANY" does not accept a list.
-func ANY(items ...Clause) Clause { return paren("ANY", kindOperand, items) }
-
-// DISTINCT_ON is a prefix, so that it stays glued past its own parentheses to
-// the first item of the SELECT list.
+// DISTINCT_ON is the one keyword that still carries its own parentheses. As a
+// constant it would work as far as the group, but the group is an operand and
+// so ends the item, and the first column of the SELECT list would then take a
+// comma: "SELECT DISTINCT ON (users.id), users.id". Writing the parentheses
+// here keeps it glued past them.
 //
 //	SELECT, DISTINCT_ON(UsersID), UsersID, UsersName
 //	// SELECT DISTINCT ON (users.id) users.id, users.name
+//
+// TODO: see TODO.md. Either find a spelling that obeys the parentheses rule or
+// record this as a permanent exception.
 func DISTINCT_ON(items ...Clause) Clause { return paren("DISTINCT ON", kindPrefix, items) }
-
-// ===========================================================================
-// The positions that take a bare column name
-// ===========================================================================
-
-// Fixing the parameter type to Id keeps expressions and Raw out of a position
-// where only a name is legal.
 
 func unqualify(i Id) string {
 	s := string(i)
@@ -785,33 +813,4 @@ func unqualify(i Id) string {
 		return s[n+1:]
 	}
 	return s
-}
-
-func unqualifiedList(cols []Id) string {
-	if len(cols) == 0 {
-		return ""
-	}
-	names := make([]string, len(cols))
-	for i, c := range cols {
-		names[i] = unqualify(c)
-	}
-	return " (" + strings.Join(names, ", ") + ")"
-}
-
-// INSERT_INTO names the table and its columns. With no columns it emits no
-// parentheses, since "INSERT INTO users ()" is not legal.
-//
-//	INSERT_INTO(Users, UsersName, UsersEmail) // INSERT INTO users (name, email)
-//
-// It is a clause keyword, so the VALUES that follows opens its own list.
-func INSERT_INTO(table Id, cols ...Id) Clause {
-	return clauseKw("INSERT INTO " + string(table) + unqualifiedList(cols))
-}
-
-// ON_CONFLICT names the conflict target, or nothing at all.
-//
-//	ON_CONFLICT(UsersEmail) // ON CONFLICT (email)
-//	ON_CONFLICT()           // ON CONFLICT
-func ON_CONFLICT(cols ...Id) Clause {
-	return clauseKw("ON CONFLICT" + unqualifiedList(cols))
 }

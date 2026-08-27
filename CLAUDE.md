@@ -76,7 +76,8 @@ Three invariants in `walk` are load-bearing and easy to break:
 3. A nested `Stm` is *always* parenthesised and `Row` always is; they run the same walker
    and differ only in the starting mode. There is no way to nest without parentheses — to
    reuse a fragment where parens are unwanted, keep it as a `[]Clause` and spread it.
-   `IN(inner...)` is a membership test; `IN(Stm(inner...))` is a scalar comparison.
+   `IN, Stm(inner...)` is a membership test; `IN, Row(Stm(inner...))` is a scalar
+   comparison.
 
 `ToSQL` returns an error and nothing panics. Errors are reported only where the alternative
 is emitting a string Postgres rejects (Raw marker/value count mismatch, `EXCLUDED` not
@@ -84,13 +85,18 @@ followed by an `Id`), plus one case where the string *would* run and that is exa
 problem: a `Raw` fragment containing `$N` for N other than 0 silently reads another
 clause's value.
 
-### When a keyword is a constant and when it is a function
+### The golden rules
 
-The rule is stated in the package doc, and it is what keeps the vocabulary from becoming a
-list to memorise. Read the doc comment before adding a keyword: a keyword is a function
-exactly when SQL always follows it with one parenthesised group (`IN`, `EXISTS`, `ANY`,
-`OVER`, `FILTER`, `DISTINCT_ON`), or when it takes a bare name (`INSERT_INTO`,
-`ON_CONFLICT`). Every other keyword is a constant.
+Three rules govern the design, all stated at the top of the package doc: the DSL
+should look like the raw SQL it produces, no special rule or keyword may be introduced that
+SQL does not have, and parentheses are explicit — if the SQL string needs them, the DSL
+must spell them with `Stm` or `Row`. Read that section before changing anything.
+
+Every keyword is therefore a constant. `DISTINCT_ON` is the sole function, because as a
+prefix it must stay glued past its own parentheses to the first item of the SELECT list.
+`SET` stripping the table qualifier and `EXCLUDED` consuming the `Id` after it are the two
+standing exceptions, kept for usability. `TODO.md` records these and the other open
+deviations; add to it rather than resolving one silently.
 
 ## Conventions
 

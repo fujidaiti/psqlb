@@ -174,15 +174,15 @@ func TestRawWithValues(t *testing.T) {
 }
 
 // DISTINCT_ON is a prefix, so it stays attached to the first item of the SELECT
-// list. FILTER is a postfix, so it attaches to the aggregate before it and the
-// alias that follows still belongs to the same item.
+// list. FILTER is an infix, so the group after it belongs to the aggregate
+// before it and the alias that follows still belongs to the same item.
 func TestDistinctOnAndFilter(t *testing.T) {
 	assertSQL(t,
 		Stm(
 			SELECT,
 			DISTINCT_ON(UsersID), UsersID,
 			UsersName,
-			FUNC("COUNT", STAR), FILTER(WHERE, UsersIsPaid), AS, Id("paid_count"),
+			Func("COUNT", STAR), FILTER, Stm(WHERE, UsersIsPaid), AS, Id("paid_count"),
 			FROM, Users,
 			GROUP_BY, UsersID, UsersName,
 			ORDER_BY, UsersID, UsersCreated, DESC,
@@ -227,11 +227,11 @@ func TestCaseExpr(t *testing.T) {
 func TestUpsert(t *testing.T) {
 	assertSQL(t,
 		Stm(
-			INSERT_INTO(Users, UsersName, UsersEmail),
+			INSERT_INTO, Users, Row(Id("name"), Id("email")),
 			VALUES,
 			Row(Lit("bob"), Lit("bob@x")),
 			Row(Lit("amy"), Lit("amy@x")),
-			ON_CONFLICT(UsersEmail),
+			ON_CONFLICT, Row(Id("email")),
 			DO_UPDATE, SET, UsersName, EQ, EXCLUDED, UsersName,
 			RETURNING, UsersID,
 		),
@@ -270,7 +270,7 @@ func TestWindow(t *testing.T) {
 		Stm(
 			SELECT,
 			UsersName,
-			FUNC("SUM", OrdersTotal), OVER(
+			Func("SUM", OrdersTotal), OVER, Stm(
 				PARTITION_BY, OrdersUserID,
 				ORDER_BY, OrdersCreated,
 				Kw("ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"),
@@ -353,10 +353,9 @@ func TestRecursiveCTE(t *testing.T) {
 	)
 }
 
-// $N numbering across three levels of nesting. The subquery that goes inside
-// IN(...) is kept as a []Clause and spread, so it is a membership test rather
-// than a comparison against a nested scalar subquery. The one used in a nesting
-// position, in FROM, is a Statement and takes its parentheses from that.
+// $N numbering across three levels of nesting. The subquery after IN is kept as
+// a []Clause and spread into a Stm, which is where its parentheses come from.
+// The one used in FROM is a Statement and takes its parentheses the same way.
 func TestNested(t *testing.T) {
 	inner := []Clause{
 		SELECT, OrdersUserID,
@@ -366,11 +365,11 @@ func TestNested(t *testing.T) {
 	middle := Stm(
 		SELECT, UsersID,
 		FROM, Users,
-		WHERE, UsersID, IN(inner...), AND, UsersAge, GT, Lit(18),
+		WHERE, UsersID, IN, Stm(inner...), AND, UsersAge, GT, Lit(18),
 	)
 	assertSQL(t,
 		Stm(
-			SELECT, FUNC("COUNT", STAR),
+			SELECT, Func("COUNT", STAR),
 			FROM, middle, AS, Id("x"),
 			WHERE, Id("x.id"), LT, Lit(1000),
 		),
@@ -387,8 +386,8 @@ func TestNested(t *testing.T) {
 	)
 }
 
-// IN takes a list or a subquery, and the same function serves both. ANY takes a
-// subquery: "= ANY" does not accept a list.
+// IN takes a Row for a list and a Stm for a subquery; the keyword is the same
+// either way. ANY takes a subquery: "= ANY" does not accept a list.
 func TestInExistsNot(t *testing.T) {
 	sub := []Clause{SELECT, Lit(1), FROM, Orders, WHERE, OrdersUserID, EQ, UsersID}
 	assertSQL(t,
@@ -396,9 +395,9 @@ func TestInExistsNot(t *testing.T) {
 			SELECT, UsersID,
 			FROM, Users,
 			WHERE,
-			UsersStatus, IN(Lit("active"), Lit("trial")), AND,
-			NOT, EXISTS(sub...), AND,
-			UsersID, EQ, ANY(SELECT, OrdersUserID, FROM, Orders),
+			UsersStatus, IN, Row(Lit("active"), Lit("trial")), AND,
+			NOT, EXISTS, Stm(sub...), AND,
+			UsersID, EQ, ANY, Stm(SELECT, OrdersUserID, FROM, Orders),
 		),
 		"SELECT users.id"+
 			" FROM users"+
