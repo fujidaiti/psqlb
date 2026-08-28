@@ -1,6 +1,9 @@
 package sb
 
-import "github.com/fujidaiti/psqlb/internal/kw"
+import (
+	"github.com/fujidaiti/psqlb/internal/tok"
+	"github.com/fujidaiti/psqlb/kw"
+)
 
 // The three write statements. Each one is written as a flat token list in the
 // order SQL reads it, and each clause below is the synopsis from the
@@ -234,7 +237,7 @@ func (p *parser) assignment() error {
 		return p.unexpected("SET", "a column name written with sb.I")
 	}
 
-	op, ok := p.peek().(kw.Operator)
+	op, ok := p.peek().(tok.Operator)
 	if !ok || op != "=" {
 		return p.unexpected("SET", `operator "=", written EQ`)
 	}

@@ -1,10 +1,11 @@
-package psqlb
+package sb_test
 
 import (
 	"errors"
 	"strings"
 	"testing"
 
+	. "github.com/fujidaiti/psqlb/kw"
 	"github.com/fujidaiti/psqlb/sb"
 )
 

@@ -1,14 +1,13 @@
-package psqlb_test
+package sb_test
 
-// This file is the only external test: everything else is in package psqlb and
-// so has the keywords in scope already. Here they arrive by dot-import, which
-// is how a user gets them, so this compiles only if the split works from
-// outside the module's own packages.
+// The package example. Every test here is external, so all of them are written
+// the way a user writes a statement — the keywords by dot-import, everything
+// else through sb — and none of them can reach an unexported name by accident.
 
 import (
 	"fmt"
 
-	. "github.com/fujidaiti/psqlb"
+	. "github.com/fujidaiti/psqlb/kw"
 	"github.com/fujidaiti/psqlb/sb"
 )
 

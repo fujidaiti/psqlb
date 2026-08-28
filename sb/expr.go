@@ -1,6 +1,9 @@
 package sb
 
-import "github.com/fujidaiti/psqlb/internal/kw"
+import (
+	"github.com/fujidaiti/psqlb/internal/tok"
+	"github.com/fujidaiti/psqlb/kw"
+)
 
 // Expressions are parsed without precedence. The DSL requires explicit
 // parentheses and the emitter never adds or removes any, so operators are
@@ -50,12 +53,12 @@ func (p *parser) commaExprs(prod string) error {
 // the production above decide whether it begins the next list item or a clause.
 func (p *parser) infix(prod string) (bool, error) {
 	switch t := p.peek().(type) {
-	case kw.Operator:
+	case tok.Operator:
 		p.pos++
 		p.e.word(string(t))
 		return true, p.quantified(prod)
 
-	case kw.Keyword:
+	case tok.Keyword:
 		switch t {
 		case kw.AND, kw.OR, kw.LIKE, kw.ILIKE:
 			p.pos++
@@ -95,7 +98,7 @@ func (p *parser) infix(prod string) (bool, error) {
 			case p.atOffset(1, kw.LIKE), p.atOffset(1, kw.ILIKE):
 				p.pos++
 				p.e.word("NOT")
-				w := p.peek().(kw.Keyword)
+				w := p.peek().(tok.Keyword)
 				p.pos++
 				p.e.word(string(w))
 				return true, p.operand(prod)
@@ -134,7 +137,7 @@ func (p *parser) infix(prod string) (bool, error) {
 //	expression operator [ ANY | SOME | ALL ] ( subquery )
 //	expression operator expression
 func (p *parser) quantified(prod string) error {
-	var q kw.Keyword
+	var q tok.Keyword
 	switch {
 	case p.at(kw.ANY):
 		q = kw.ANY
@@ -238,7 +241,7 @@ func (p *parser) operand(prod string) error {
 		}
 		return p.parenExpr(t)
 
-	case kw.Keyword:
+	case tok.Keyword:
 		switch t {
 		case kw.STAR, kw.TRUE, kw.FALSE, kw.NULL, kw.DEFAULT:
 			p.pos++

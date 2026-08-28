@@ -24,12 +24,12 @@
 //
 // # The two packages
 //
-// The SQL keywords live in package psqlb and everything else lives here. A user
+// The SQL keywords live in package kw and everything else lives here. A user
 // dot-imports the keywords, so that they read as SQL, and reaches this package
 // through its name:
 //
 //	import (
-//		. "github.com/fujidaiti/psqlb"
+//		. "github.com/fujidaiti/psqlb/kw"
 //		"github.com/fujidaiti/psqlb/sb"
 //	)
 //
@@ -39,10 +39,17 @@
 // the SQL vocabulary. The prefix is what lets them be this short: sb.V(18) is
 // unambiguous where a bare V(18) would not be.
 //
-// The keyword type is in internal/kw, which neither package re-exports, so a
-// user cannot declare a keyword of their own. That matters more here than it
-// would in a renderer: a keyword the parser does not know is a keyword the
-// parser cannot place.
+// Each keyword is declared once, in kw, and this package compares against those
+// same constants, so the spelling a user writes and the value the parser
+// matches are the same thing and a misspelling here does not compile.
+//
+// The token types are in internal/tok rather than in kw, so that a dot-import
+// brings SQL words into scope and nothing else. Token is the one name aliased
+// out of it, by this package, because a user needs to name it: it is the
+// parameter type of ToSQL, and a statement assembled in pieces is a []Token.
+// Nothing else about the types is public, so a user cannot declare a keyword of
+// their own. That matters more here than it would in a renderer: a keyword the
+// parser does not know is a keyword the parser cannot place.
 //
 // # Golden rules
 //
@@ -94,7 +101,7 @@
 //
 //	Token                    | Written as                | Example
 //	-------------------------|---------------------------|---------------------------
-//	Keyword                  | a constant from psqlb     | SELECT FROM WHERE IN OVER
+//	Keyword                  | a constant from kw        | SELECT FROM WHERE IN OVER
 //	Operator                 | a constant, or sb.RawOp() | EQ LIKE, sb.RawOp("@>")
 //	Identifier               | sb.I                      | UsersID
 //	Value                    | sb.V()                    | sb.V(42)
@@ -292,7 +299,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/fujidaiti/psqlb/internal/kw"
+	"github.com/fujidaiti/psqlb/internal/tok"
 )
 
 // ===========================================================================
@@ -307,7 +314,7 @@ import (
 // Every position in the DSL takes a Token, never an any. A plain Go value is
 // not a token: it enters a statement only through V, or through the "$0"
 // markers of RawExpr. That is what keeps ToSQL(SELECT, "id") from compiling.
-type Token = kw.Token
+type Token = tok.Token
 
 // I is an identifier: a table name, a column name, an alias, or a simple type
 // name. Its underlying type is string so that it can be declared with const.
@@ -377,7 +384,7 @@ func RawExpr(sql string, vals ...any) Token {
 // may appear, and the symbol is emitted verbatim.
 //
 //	..., WHERE, UsersMeta, RawOp("@>"), V(`{"vip":true}`) // users.meta @> $1
-func RawOp(sql string) Token { return kw.Operator(sql) }
+func RawOp(sql string) Token { return tok.Operator(sql) }
 
 // ===========================================================================
 // Groups

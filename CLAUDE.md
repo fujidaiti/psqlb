@@ -15,16 +15,18 @@ else through the `sb.` prefix:
 
 ```go
 import (
-    . "github.com/fujidaiti/psqlb"
+    . "github.com/fujidaiti/psqlb/kw"
     "github.com/fujidaiti/psqlb/sb"
 )
 
 sb.ToSQL(SELECT, UsersID, FROM, Users, WHERE, UsersAge, GTE, sb.V(18))
 ```
 
-- `./keywords.go` — `package psqlb`: the SQL keyword constants, re-exported from
-  `internal/kw`, plus the six named operator constants (`EQ`, `NE`, `GT`, `GTE`, `LT`,
-  `LTE`). Nothing else. This is the package that is dot-imported.
+The module root holds no Go files.
+
+- `./kw/kw.go` — `package kw`: every SQL keyword constant, plus the six named operator
+  constants (`EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE`). Nothing else, not even the type they
+  are declared with. This is the package that is dot-imported.
 - `./sb/sb.go` — `package sb`: the design document (its package doc comment), the token
   constructors and the entry point. `Token`, `I`, `V`, `RawExpr`, `RawOp`, `Group`, `P`,
   `F`, `ToSQL`.
@@ -35,17 +37,17 @@ sb.ToSQL(SELECT, UsersID, FROM, Users, WHERE, UsersAge, GTE, sb.V(18))
 - `./sb/expr.go` — the expression productions.
 - `./sb/emit.go` — the output builder, `$N` binding and `RawExpr` marker substitution.
 - `./sb/errors.go` — the three error types.
-- `./internal/kw/kw.go` — `package kw`: `Token`, `Keyword`, `Operator` and every keyword
-  constant. Internal, so a user cannot declare a keyword.
-- `./sql_test.go`, `./grammar_test.go`, `./errors_test.go` — `package psqlb`, so the
-  keywords are in scope bare, exactly as a dot-import gives them.
-- `./example_test.go` — `package psqlb_test`: one example that checks the intended import
-  style compiles from outside.
+- `./internal/tok/tok.go` — `package tok`: `Token`, `Keyword` and `Operator`, and nothing
+  else. The types are here rather than in `kw` because `kw` is dot-imported and must bring
+  SQL words into scope alone. `sb` aliases `Token` out of it, since a user has to name that
+  one; the rest stays internal, so a user cannot declare a keyword.
+- `./sb/sql_test.go`, `./sb/grammar_test.go`, `./sb/errors_test.go`,
+  `./sb/example_test.go` — `package sb_test`, all four external, so every test is written
+  exactly the way a user writes a statement: the keywords by dot-import, everything else
+  through `sb`.
 
-The import direction is `psqlb` → `sb` → `internal/kw`. `sb` must never import `psqlb`.
-
-`REDESIGN.md` is the architecture document for the current rewrite. It records the settled
-decisions and the phase plan; read it before changing the parser's shape.
+The import direction is `sb` → `kw` → `internal/tok`, and `sb` imports `internal/tok`
+directly as well. `kw` must never import `sb`.
 
 Nothing here has been run against a real database. The tests compare generated strings and
 bound arguments only.
@@ -103,8 +105,8 @@ nothing more, which is what keeps it small.
 
 ### Tokens
 
-`sb.Token` is `kw.Token`, a marker interface with one exported method. The concrete types
-are `kw.Keyword`, `kw.Operator`, `sb.I`, `sb.V`'s `value`, `sb.RawExpr`'s `rawFrag` and
+`sb.Token` is `tok.Token`, a marker interface with one exported method. The concrete types
+are `tok.Keyword`, `tok.Operator`, `sb.I`, `sb.V`'s `value`, `sb.RawExpr`'s `rawFrag` and
 `sb.Group` (which `sb.P` and `sb.F` both build). The parser switches on them; anything
 else is an error.
 
@@ -116,8 +118,9 @@ runs while returning the wrong rows.
 Every keyword is **one word**. Phrases are written as the words they are made of: `GROUP,
 BY`, `IS, NOT, NULL`, `LEFT, OUTER, JOIN`. The parser reads sequences natively, so a phrase
 needs no constant of its own and optional words combine instead of multiplying. The keyword
-constants live in `internal/kw` and are re-exported by `psqlb`, so the spelling a user
-writes and the value the parser compares against are the same thing.
+constants are declared once, in `kw`, and the parser compares against those same constants,
+so the spelling a user writes and the value the parser compares against are the same thing
+and a misspelling in a production does not compile.
 
 `sb.RawExpr` is **one opaque expression**. The parser checks where it may appear and never
 looks inside the string.

@@ -3,7 +3,8 @@ package sb
 import (
 	"fmt"
 
-	"github.com/fujidaiti/psqlb/internal/kw"
+	"github.com/fujidaiti/psqlb/internal/tok"
+	"github.com/fujidaiti/psqlb/kw"
 )
 
 // ===========================================================================
@@ -35,15 +36,15 @@ func (p *parser) lookahead(n int) Token {
 }
 
 // at reports whether the next token is the keyword k.
-func (p *parser) at(k kw.Keyword) bool { return p.atOffset(0, k) }
+func (p *parser) at(k tok.Keyword) bool { return p.atOffset(0, k) }
 
-func (p *parser) atOffset(n int, k kw.Keyword) bool {
-	w, ok := p.lookahead(n).(kw.Keyword)
+func (p *parser) atOffset(n int, k tok.Keyword) bool {
+	w, ok := p.lookahead(n).(tok.Keyword)
 	return ok && w == k
 }
 
 // accept consumes k if it is next, without emitting it.
-func (p *parser) accept(k kw.Keyword) bool {
+func (p *parser) accept(k tok.Keyword) bool {
 	if p.at(k) {
 		p.pos++
 		return true
@@ -52,7 +53,7 @@ func (p *parser) accept(k kw.Keyword) bool {
 }
 
 // take consumes k and emits it.
-func (p *parser) take(k kw.Keyword) bool {
+func (p *parser) take(k tok.Keyword) bool {
 	if p.accept(k) {
 		p.e.word(string(k))
 		return true
@@ -61,7 +62,7 @@ func (p *parser) take(k kw.Keyword) bool {
 }
 
 // want consumes and emits k, or reports what was written instead.
-func (p *parser) want(prod string, k kw.Keyword) error {
+func (p *parser) want(prod string, k tok.Keyword) error {
 	if p.take(k) {
 		return nil
 	}
@@ -78,9 +79,9 @@ func describe(t Token) string {
 	switch v := t.(type) {
 	case nil:
 		return "the end of the group"
-	case kw.Keyword:
+	case tok.Keyword:
 		return "keyword " + string(v)
-	case kw.Operator:
+	case tok.Operator:
 		return fmt.Sprintf("operator %q", string(v))
 	case I:
 		return fmt.Sprintf("identifier %q", string(v))
@@ -107,7 +108,7 @@ func (p *parser) startsExpr() bool {
 	switch t := p.peek().(type) {
 	case I, value, rawFrag, Group:
 		return true
-	case kw.Keyword:
+	case tok.Keyword:
 		switch t {
 		case kw.NOT, kw.EXISTS, kw.CASE, kw.STAR, kw.TRUE, kw.FALSE, kw.NULL, kw.DEFAULT:
 			return true
@@ -155,7 +156,7 @@ func startsStatement(g Group) bool {
 	if len(items) == 0 {
 		return false
 	}
-	k, ok := items[0].(kw.Keyword)
+	k, ok := items[0].(tok.Keyword)
 	if !ok {
 		return false
 	}

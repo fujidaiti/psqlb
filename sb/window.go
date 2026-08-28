@@ -1,6 +1,6 @@
 package sb
 
-import "github.com/fujidaiti/psqlb/internal/kw"
+import "github.com/fujidaiti/psqlb/kw"
 
 // Window functions, and the two things that attach to an aggregate call.
 //

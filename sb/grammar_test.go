@@ -1,8 +1,9 @@
-package psqlb
+package sb_test
 
 import (
 	"testing"
 
+	. "github.com/fujidaiti/psqlb/kw"
 	"github.com/fujidaiti/psqlb/sb"
 )
 
