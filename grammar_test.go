@@ -547,3 +547,133 @@ func TestSetOperations(t *testing.T) {
 		},
 	})
 }
+
+// window functions: FILTER, OVER, the WINDOW clause and frame clauses.
+func TestWindowFunctions(t *testing.T) {
+	run(t, []gcase{
+		{
+			// OVER accepts a window name or a parenthesised definition. The
+			// production is reached only where a window specification belongs,
+			// so it can look at what is written and take either.
+			name: "OVER a window name",
+			stmt: sb.S(SELECT, sb.Func("SUM", OrdersTotal), OVER, sb.Id("w"), FROM, Orders,
+				WINDOW, sb.Id("w"), AS, sb.S(PARTITION, BY, OrdersUserID)),
+			want: "SELECT SUM(orders.total) OVER w FROM orders" +
+				" WINDOW w AS (PARTITION BY orders.user_id)",
+		},
+		{
+			name: "OVER a definition",
+			stmt: sb.S(SELECT, sb.Func("row_number"), OVER, sb.S(ORDER, BY, OrdersID, DESC), FROM, Orders),
+			want: "SELECT row_number() OVER (ORDER BY orders.id DESC) FROM orders",
+		},
+		{
+			name: "OVER an empty definition",
+			stmt: sb.S(SELECT, sb.Func("COUNT", STAR), OVER, sb.S(), FROM, Orders),
+			want: "SELECT COUNT(*) OVER () FROM orders",
+		},
+		{
+			name: "a frame with one bound",
+			stmt: sb.S(SELECT, sb.Func("SUM", OrdersTotal), OVER, sb.S(
+				ORDER, BY, OrdersID, RANGE, UNBOUNDED, PRECEDING), FROM, Orders),
+			want: "SELECT SUM(orders.total) OVER" +
+				" (ORDER BY orders.id RANGE UNBOUNDED PRECEDING) FROM orders",
+		},
+		{
+			name: "a frame with an offset bound",
+			stmt: sb.S(SELECT, sb.Func("SUM", OrdersTotal), OVER, sb.S(
+				ORDER, BY, OrdersID,
+				ROWS, BETWEEN, sb.Lit(3), PRECEDING, AND, sb.Lit(1), FOLLOWING), FROM, Orders),
+			want: "SELECT SUM(orders.total) OVER" +
+				" (ORDER BY orders.id ROWS BETWEEN $1 PRECEDING AND $2 FOLLOWING) FROM orders",
+			args: []any{3, 1},
+		},
+		{
+			name: "FILTER",
+			stmt: sb.S(SELECT, sb.Func("COUNT", STAR), FILTER, sb.S(WHERE, UsersIsPaid), FROM, Users),
+			want: "SELECT COUNT(*) FILTER (WHERE users.paid) FROM users",
+		},
+		{
+			name: "FILTER and OVER together",
+			stmt: sb.S(SELECT,
+				sb.Func("COUNT", STAR), FILTER, sb.S(WHERE, UsersIsPaid), OVER, sb.Id("w"), AS, sb.Id("c"),
+				FROM, Users, WINDOW, sb.Id("w"), AS, sb.S()),
+			want: "SELECT COUNT(*) FILTER (WHERE users.paid) OVER w AS c" +
+				" FROM users WINDOW w AS ()",
+		},
+		{
+			// An aggregate may order its input, which is why a function's
+			// arguments are not simply an expression list.
+			name: "ORDER BY inside an aggregate",
+			stmt: sb.S(SELECT, sb.Func("string_agg", UsersName, sb.Lit(","), ORDER, BY, UsersID), FROM, Users),
+			want: "SELECT string_agg(users.name, $1 ORDER BY users.id) FROM users",
+			args: []any{","},
+		},
+	})
+}
+
+// with_query: WITH [RECURSIVE] name [(columns)] AS [[NOT] MATERIALIZED] (query)
+func TestCTEs(t *testing.T) {
+	body := sb.S(SELECT, UsersID, FROM, Users)
+	run(t, []gcase{
+		{
+			name: "one query",
+			stmt: sb.S(WITH, sb.Id("t"), AS, body, SELECT, STAR, FROM, sb.Id("t")),
+			want: "WITH t AS (SELECT users.id FROM users) SELECT * FROM t",
+		},
+		{
+			name: "several queries",
+			stmt: sb.S(WITH, sb.Id("a"), AS, body, sb.Id("b"), AS, body,
+				SELECT, STAR, FROM, sb.Id("a")),
+			want: "WITH a AS (SELECT users.id FROM users)," +
+				" b AS (SELECT users.id FROM users)" +
+				" SELECT * FROM a",
+		},
+		{
+			name: "named columns and MATERIALIZED",
+			stmt: sb.S(WITH, sb.Id("t"), sb.S(sb.Id("id")), AS, MATERIALIZED, body,
+				SELECT, STAR, FROM, sb.Id("t")),
+			want: "WITH t (id) AS MATERIALIZED (SELECT users.id FROM users) SELECT * FROM t",
+		},
+		{
+			name: "NOT MATERIALIZED",
+			stmt: sb.S(WITH, sb.Id("t"), AS, NOT, MATERIALIZED, body, SELECT, STAR, FROM, sb.Id("t")),
+			want: "WITH t AS NOT MATERIALIZED (SELECT users.id FROM users) SELECT * FROM t",
+		},
+		{
+			name: "in front of a write statement",
+			stmt: sb.S(WITH, sb.Id("t"), AS, body,
+				DELETE, FROM, Users, WHERE, UsersID, IN, sb.S(SELECT, STAR, FROM, sb.Id("t"))),
+			want: "WITH t AS (SELECT users.id FROM users)" +
+				" DELETE FROM users WHERE users.id IN (SELECT * FROM t)",
+		},
+	})
+}
+
+// The expression forms that landed last.
+func TestRemainingExpressions(t *testing.T) {
+	run(t, []gcase{
+		{
+			name: "COLLATE",
+			stmt: sb.S(SELECT, UsersID, FROM, Users, ORDER, BY, UsersName, COLLATE, sb.Id(`"C"`), DESC),
+			want: `SELECT users.id FROM users ORDER BY users.name COLLATE "C" DESC`,
+		},
+		{
+			name: "SIMILAR TO",
+			stmt: sb.S(SELECT, UsersID, FROM, Users, WHERE, UsersName, SIMILAR, TO, sb.Lit("%a%")),
+			want: "SELECT users.id FROM users WHERE users.name SIMILAR TO $1",
+			args: []any{"%a%"},
+		},
+		{
+			name: "NOT SIMILAR TO",
+			stmt: sb.S(SELECT, UsersID, FROM, Users, WHERE, UsersName, NOT, SIMILAR, TO, sb.Lit("%a%")),
+			want: "SELECT users.id FROM users WHERE users.name NOT SIMILAR TO $1",
+			args: []any{"%a%"},
+		},
+		{
+			name: "a bare VALUES query",
+			stmt: sb.S(VALUES, sb.S(sb.Lit(1), sb.Lit("a")), sb.S(sb.Lit(2), sb.Lit("b"))),
+			want: "VALUES ($1, $2), ($3, $4)",
+			args: []any{1, "a", 2, "b"},
+		},
+	})
+}

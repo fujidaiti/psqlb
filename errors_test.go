@@ -189,10 +189,16 @@ func TestStatementShape(t *testing.T) {
 // user can tell "I wrote this wrong" from "this package has not got there yet".
 func TestNotSupportedYet(t *testing.T) {
 	cases := []ecase{
-		{"WITH", sb.S(WITH, sb.Id("t"), AS, sb.S(SELECT, UsersID, FROM, Users)), "WITH"},
-		{"FILTER", sb.S(SELECT, sb.Func("COUNT", STAR), FILTER, sb.S(WHERE, UsersIsPaid), FROM, Users), "FILTER"},
-		{"OVER", sb.S(SELECT, sb.Func("SUM", UsersAge), OVER, sb.S(), FROM, Users), "OVER"},
-		{"COLLATE", sb.S(SELECT, UsersID, FROM, Users, WHERE, UsersName, COLLATE, sb.Id("c")), "COLLATE"},
+		{
+			"ORDER BY USING",
+			sb.S(SELECT, UsersID, FROM, Users, ORDER, BY, UsersID, USING, sb.Op(">")),
+			"ORDER BY ... USING",
+		},
+		{
+			"ON CONFLICT ON CONSTRAINT",
+			sb.S(INSERT, INTO, Users, VALUES, sb.S(sb.Lit(1)), ON, CONFLICT, ON, sb.Id("c")),
+			"ON CONFLICT ON CONSTRAINT",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -305,6 +311,64 @@ func TestJoinConditions(t *testing.T) {
 		{
 			name: "a set operation with nothing after it",
 			stmt: sb.S(SELECT, UsersID, FROM, Users, UNION, ALL),
+			want: "statement: expected keyword SELECT",
+		},
+	})
+}
+
+// A window specification, a CTE and a frame clause are checked the same way as
+// everything else.
+func TestWindowsAndCTEs(t *testing.T) {
+	runErrs(t, []ecase{
+		{
+			name: "OVER something that is neither a name nor a definition",
+			stmt: sb.S(SELECT, sb.Func("COUNT", STAR), OVER, sb.Lit(1), FROM, Users),
+			want: "expected a window name or a parenthesised window definition",
+		},
+		{
+			name: "FILTER without WHERE",
+			stmt: sb.S(SELECT, sb.Func("COUNT", STAR), FILTER, sb.S(UsersIsPaid), FROM, Users),
+			want: "FILTER: expected keyword WHERE",
+		},
+		{
+			name: "FILTER without a group",
+			stmt: sb.S(SELECT, sb.Func("COUNT", STAR), FILTER, UsersIsPaid, FROM, Users),
+			want: "a parenthesised WHERE clause after FILTER is required",
+		},
+		{
+			name: "a frame bound with no direction",
+			stmt: sb.S(SELECT, sb.Func("COUNT", STAR), OVER, sb.S(ROWS, sb.Lit(3)), FROM, Users),
+			want: "frame clause: expected keyword PRECEDING or FOLLOWING",
+		},
+		{
+			name: "BETWEEN in a frame without AND",
+			stmt: sb.S(SELECT, sb.Func("COUNT", STAR),
+				OVER, sb.S(ROWS, BETWEEN, UNBOUNDED, PRECEDING, CURRENT, ROW), FROM, Users),
+			want: "frame clause: expected keyword AND",
+		},
+		{
+			name: "a WINDOW entry without AS",
+			stmt: sb.S(SELECT, UsersID, FROM, Users, WINDOW, sb.Id("w"), sb.S()),
+			want: "WINDOW: expected keyword AS",
+		},
+		{
+			name: "COLLATE without a collation name",
+			stmt: sb.S(SELECT, UsersID, FROM, Users, ORDER, BY, UsersName, COLLATE, sb.Lit("C")),
+			want: "expected a collation name written with sb.Id",
+		},
+		{
+			name: "a CTE without AS",
+			stmt: sb.S(WITH, sb.Id("t"), sb.S(SELECT, UsersID, FROM, Users), SELECT, STAR),
+			want: "WITH: expected keyword AS",
+		},
+		{
+			name: "a CTE body that is not a group",
+			stmt: sb.S(WITH, sb.Id("t"), AS, SELECT, UsersID, FROM, Users),
+			want: "a parenthesised query as the body is required",
+		},
+		{
+			name: "WITH with no statement after it",
+			stmt: sb.S(WITH, sb.Id("t"), AS, sb.S(SELECT, UsersID, FROM, Users)),
 			want: "statement: expected keyword SELECT",
 		},
 	})

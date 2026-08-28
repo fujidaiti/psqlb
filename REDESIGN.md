@@ -1,8 +1,9 @@
 # REDESIGN: a grammar-directed builder
 
-Status: accepted, and being implemented. Phase 0 (foundations) and phase 1 (SELECT and
-expressions) have landed; phases 2 to 4 are still to come. The document describes the
-architecture only — no implementation details, no code to copy.
+Status: accepted and implemented. All four phases have landed: the token kinds are gone,
+the parser is in, and every worked example passes. The document describes the
+architecture only — no implementation details, no code to copy. What is still not
+modelled is listed in the `# Scope` section of the `sb` package doc.
 
 ## Context
 

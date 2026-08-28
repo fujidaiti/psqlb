@@ -180,9 +180,70 @@ func (p *parser) statement() error {
 	case p.at(kw.DELETE):
 		return p.deleteStmt()
 	case p.at(kw.WITH):
-		return &UnsupportedError{"WITH"}
+		return p.withStmt()
 	}
 	return p.query()
+}
+
+// withStmt implements
+//
+//	WITH [ RECURSIVE ] with_query [, ...] statement
+//
+// The CTE bodies are parenthesised in SQL, so each is written with S like every
+// other group, and the statement they are for follows them as plain tokens.
+func (p *parser) withStmt() error {
+	p.take(kw.WITH)
+	p.take(kw.RECURSIVE)
+	for i := 0; ; i++ {
+		if i > 0 {
+			p.e.comma()
+		}
+		if err := p.withQuery(); err != nil {
+			return err
+		}
+		if _, ok := p.peek().(Id); !ok {
+			break
+		}
+	}
+	if p.at(kw.WITH) {
+		return p.unexpected("WITH", "the statement the queries are for")
+	}
+	return p.statement()
+}
+
+// withQuery implements
+//
+//	name [ ( column_name [, ...] ) ] AS [ [ NOT ] MATERIALIZED ] ( query )
+func (p *parser) withQuery() error {
+	name, ok := p.peek().(Id)
+	if !ok {
+		return p.unexpected("WITH", "a query name written with sb.Id")
+	}
+	p.pos++
+	p.e.word(string(name))
+
+	if g, ok := p.peek().(Group); ok && g.name == "" && !startsStatement(g) {
+		p.pos++
+		if err := p.parens(g, (*parser).nameList); err != nil {
+			return err
+		}
+	}
+	if err := p.want("WITH", kw.AS); err != nil {
+		return err
+	}
+	if p.take(kw.NOT) {
+		if err := p.want("WITH", kw.MATERIALIZED); err != nil {
+			return err
+		}
+	} else {
+		p.take(kw.MATERIALIZED)
+	}
+
+	g, err := p.group("WITH", "a parenthesised query as the body", "AS, sb.S(SELECT, ...)")
+	if err != nil {
+		return err
+	}
+	return p.parens(g, (*parser).statement)
 }
 
 // query implements
@@ -219,8 +280,8 @@ func (p *parser) queryTerm() error {
 	if p.at(kw.SELECT) {
 		return p.selectStmt()
 	}
-	if p.at(kw.VALUES) {
-		return &UnsupportedError{"a bare VALUES statement"}
+	if p.take(kw.VALUES) {
+		return p.valuesRows()
 	}
 	return p.unexpected("statement", "keyword SELECT, INSERT, UPDATE or DELETE")
 }
@@ -273,8 +334,10 @@ func (p *parser) selectStmt() error {
 			return err
 		}
 	}
-	if p.at(kw.WINDOW) {
-		return &UnsupportedError{"the WINDOW clause"}
+	if p.take(kw.WINDOW) {
+		if err := p.windowList(); err != nil {
+			return err
+		}
 	}
 	if p.take(kw.ORDER) {
 		if err := p.want("ORDER BY", kw.BY); err != nil {
@@ -303,19 +366,7 @@ func (p *parser) selectStmt() error {
 //
 // A grouping element is an expression, an empty group, or a call of ROLLUP,
 // CUBE or GROUPING SETS, all of which are already expressions here.
-func (p *parser) groupList() error {
-	for i := 0; ; i++ {
-		if i > 0 {
-			p.e.comma()
-		}
-		if err := p.expr("GROUP BY"); err != nil {
-			return err
-		}
-		if !p.startsExpr() {
-			return nil
-		}
-	}
-}
+func (p *parser) groupList() error { return p.commaExprs("GROUP BY") }
 
 // targetList parses an output list: the one after SELECT and the one after
 // RETURNING, which have the same grammar.

@@ -28,8 +28,10 @@ sb.S(SELECT, UsersID, FROM, Users, WHERE, UsersAge, GTE, sb.Lit(18))
 - `./sb/sb.go` — `package sb`: the design document (its package doc comment), the token
   constructors and the entry point. `Token`, `Id`, `Lit`, `Raw`, `Op`, `Group`, `S`,
   `Func`, `ToSQL`.
-- `./sb/parse.go` — the cursor and the SELECT productions.
+- `./sb/parse.go` — the cursor, the statement dispatcher, `WITH`, and the SELECT
+  productions.
 - `./sb/write.go` — the INSERT, UPDATE and DELETE productions.
+- `./sb/window.go` — `FILTER`, `OVER`, the `WINDOW` clause and frame clauses.
 - `./sb/expr.go` — the expression productions.
 - `./sb/emit.go` — the output builder, `$N` binding and `Raw` marker substitution.
 - `./sb/errors.go` — the three error types.
@@ -154,11 +156,16 @@ in `sb/write.go`. Add to it rather than resolving it silently.
 
 ### Scope
 
-Phases 1 to 3 are in: `SELECT` with every clause from `DISTINCT ON` to `OFFSET`, joins in
-all their forms with `ON` and `USING`, `LATERAL`, `GROUP BY`, `HAVING`, set operations, the
-expression grammar, and the three write statements with `RETURNING` and `ON CONFLICT`.
-`WITH` and window functions are phase 4. See `REDESIGN.md` and the `# Scope` section of the
-`sb` package doc.
+All four phases are in: `SELECT` with every clause, joins in all their forms, `LATERAL`,
+`GROUP BY`, `HAVING`, set operations, `WITH [RECURSIVE]`, window functions with frames, the
+three write statements with `RETURNING` and `ON CONFLICT`, and the expression grammar.
+Every example in `sql_test.go` passes and none is skipped.
+
+The `# Scope` section of the `sb` package doc lists what is still not modelled — type names
+with modifiers, `CAST(x AS type)`, frame exclusion, `ORDER BY ... USING`, `ON CONFLICT ON
+CONSTRAINT`, locking clauses, DDL, `MERGE`. There is no escape hatch for an unmodelled
+clause by design: the answer is to add the production. `sb.Raw` covers an unmodelled
+expression.
 
 ## Conventions
 
@@ -171,9 +178,7 @@ implements, so the grammar can be compared against the source of truth by readin
 that up when adding a production.
 
 `sql_test.go` is usage documentation as well as a test: each example states the SQL it must
-produce with the expected string broken into lines matching the Go lines above it. An
-example whose construct belongs to a later phase is written in its final spelling and
-skipped with the `phase` helper, so it says what that phase must produce.
+produce with the expected string broken into lines matching the Go lines above it.
 `grammar_test.go` is the mechanical coverage, organised by production. `errors_test.go` is
 the table of sequences that must be rejected. Add examples to the first, production
 coverage to the second, and every newly rejected sequence to the third.

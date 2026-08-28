@@ -194,16 +194,21 @@
 //
 // # Scope
 //
-// The grammar is built in phases, and anything outside the current one is
-// reported as not supported yet. What is modelled today:
+// The grammar covers the statements an application writes. Anything outside it
+// is reported as not supported yet, by name. What is modelled:
+//
+//	[WITH [RECURSIVE] name [(column [, ...])] AS [[NOT] MATERIALIZED] (query) [, ...]]
 //
 //	SELECT [ALL | DISTINCT [ON (...)]] expression [AS name] [, ...]
 //	    [FROM from_item [, ...]]
 //	    [WHERE condition]
 //	    [GROUP BY expression [, ...]] [HAVING condition]
 //	    [ORDER BY expression [ASC|DESC] [NULLS {FIRST|LAST}] [, ...]]
+//	    [WINDOW name AS (window_definition) [, ...]]
 //	    [LIMIT {count | ALL}] [OFFSET start]
 //	    [{UNION | INTERSECT | EXCEPT} [ALL | DISTINCT] query]
+//
+//	VALUES (expression [, ...]) [, ...]
 //
 // A from_item is a table, a parenthesised subquery with an AS alias, or a
 // function call, each optionally preceded by LATERAL, and any of them may be
@@ -229,12 +234,19 @@
 //
 // Expressions: column references, Lit, Raw, Func, named and hand-written
 // operators, AND, OR, NOT, IS [NOT] NULL/TRUE/FALSE/UNKNOWN, IS [NOT] DISTINCT
-// FROM, [NOT] IN, [NOT] BETWEEN, [NOT] LIKE/ILIKE, EXISTS, a quantified
-// comparison with ANY/SOME/ALL, CASE, "::" written TYPECAST with the type name
-// as an Id, row constructors, scalar subqueries and parenthesised expressions.
+// FROM, [NOT] IN, [NOT] BETWEEN, [NOT] LIKE/ILIKE, [NOT] SIMILAR TO, COLLATE,
+// EXISTS, a quantified comparison with ANY/SOME/ALL, CASE, "::" written
+// TYPECAST with the type name as an Id, row constructors, scalar subqueries and
+// parenthesised expressions. A function call may take ALL or DISTINCT, may
+// order its input with ORDER BY, and may carry FILTER and OVER, the latter
+// taking a window name or a definition with PARTITION BY, ORDER BY and a RANGE,
+// ROWS or GROUPS frame.
 //
-// Still to come: WITH, window functions and COLLATE. DDL, MERGE, locking
-// clauses and array and JSON path syntax are not planned.
+// Not modelled: a type name with a modifier or more than one word, which is
+// written with Raw; the CAST(x AS type) form, written "::"; frame exclusion;
+// ORDER BY ... USING; ON CONFLICT ON CONSTRAINT; FETCH and locking clauses;
+// TABLESAMPLE; DDL; MERGE; and array and JSON path syntax. Each is a candidate
+// for later work, and none of them blocks the statements above.
 //
 // # Known limitations
 //

@@ -15,11 +15,6 @@ import (
 // SQL it must produce and the arguments it must bind. The expected SQL is
 // broken into lines that match the lines of Go above it, so the input and the
 // output can be compared line by line.
-//
-// The grammar is built one phase at a time, and an example for a construct
-// whose phase has not landed is skipped rather than deleted: it is written in
-// its final spelling, so it says what that phase must produce. See the package
-// doc of sb for the phases.
 
 const (
 	Users          = sb.Id("users")
@@ -75,13 +70,6 @@ func assertErr(t *testing.T, s sb.Group, wantSubstr string) {
 	if !strings.Contains(err.Error(), wantSubstr) {
 		t.Errorf("error:\n got: %v\nwant substring: %s", err, wantSubstr)
 	}
-}
-
-// phase skips an example whose construct the grammar has not reached yet. The
-// example is still compiled, so its spelling stays honest.
-func phase(t *testing.T, n int, construct string) {
-	t.Helper()
-	t.Skipf("%s lands in phase %d", construct, n)
 }
 
 func TestBasic(t *testing.T) {
@@ -229,7 +217,6 @@ func TestDistinctOn(t *testing.T) {
 // FILTER attaches a condition to an aggregate, and the alias after it still
 // belongs to the same select-list item.
 func TestFilterAndGroupBy(t *testing.T) {
-	phase(t, 4, "FILTER")
 	assertSQL(t,
 		sb.S(
 			SELECT,
@@ -319,7 +306,6 @@ func TestUpdateFrom(t *testing.T) {
 // The window specification is a token list of its own, and the frame clause is
 // spelled out word by word rather than folded into one hand-written fragment.
 func TestWindow(t *testing.T) {
-	phase(t, 4, "window functions")
 	assertSQL(t,
 		sb.S(
 			SELECT,
@@ -373,7 +359,6 @@ func TestLateral(t *testing.T) {
 }
 
 func TestRecursiveCTE(t *testing.T) {
-	phase(t, 4, "WITH")
 	assertSQL(t,
 		sb.S(
 			WITH, RECURSIVE, sb.Id("tree"), AS,

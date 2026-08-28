@@ -27,12 +27,16 @@ func (p *parser) expr(prod string) error {
 
 // exprList parses a comma-separated list of expressions: the items of a row
 // constructor, an IN list, a DISTINCT ON list or a function's arguments.
-func (p *parser) exprList() error {
+func (p *parser) exprList() error { return p.commaExprs("expression list") }
+
+// commaExprs is the list loop the expression lists share. The comma comes from
+// here, and the list ends where the next token cannot begin an expression.
+func (p *parser) commaExprs(prod string) error {
 	for i := 0; ; i++ {
 		if i > 0 {
 			p.e.comma()
 		}
-		if err := p.expr("expression list"); err != nil {
+		if err := p.expr(prod); err != nil {
 			return err
 		}
 		if !p.startsExpr() {
@@ -95,16 +99,31 @@ func (p *parser) infix(prod string) (bool, error) {
 				p.pos++
 				p.e.word(string(w))
 				return true, p.operand(prod)
+			case p.atOffset(1, kw.SIMILAR):
+				p.pos++
+				p.e.word("NOT")
+				return true, p.similarTo(prod)
 			}
 
 		case kw.COLLATE:
-			return false, &UnsupportedError{"COLLATE"}
+			p.pos++
+			p.e.word("COLLATE")
+			name, ok := p.peek().(Id)
+			if !ok {
+				return true, p.unexpected(prod, "a collation name written with sb.Id")
+			}
+			p.pos++
+			p.e.word(string(name))
+			return true, nil
+
 		case kw.SIMILAR:
-			return false, &UnsupportedError{"SIMILAR TO"}
+			return true, p.similarTo(prod)
+
 		case kw.FILTER:
-			return false, &UnsupportedError{"FILTER"}
+			return true, p.filter(prod)
+
 		case kw.OVER:
-			return false, &UnsupportedError{"OVER"}
+			return true, p.over(prod)
 		}
 	}
 	return false, nil
@@ -265,7 +284,7 @@ func (p *parser) parenExpr(g Group) error {
 
 // call implements
 //
-//	function_name ( [ ALL | DISTINCT ] expression [, ...] )
+//	function_name ( [ ALL | DISTINCT ] expression [, ...] [ ORDER BY sort_key [, ...] ] )
 //
 // The parentheses come from Func, which is a constructor rather than a keyword:
 // a function call is written with parentheses in SQL too.
@@ -278,6 +297,16 @@ func (p *parser) call(g Group) error {
 		}
 		if err := sub.exprList(); err != nil {
 			return err
+		}
+		// An aggregate may order its input, which is why this is not simply an
+		// expression list.
+		if sub.take(kw.ORDER) {
+			if err := sub.want("ORDER BY", kw.BY); err != nil {
+				return err
+			}
+			if err := sub.sortList(); err != nil {
+				return err
+			}
 		}
 	}
 	if !sub.done() {
@@ -343,4 +372,15 @@ func (p *parser) typeName(prod string) error {
 		return nil
 	}
 	return p.unexpected(prod, "a type name written with sb.Id or sb.Raw")
+}
+
+// similarTo implements
+//
+//	expression [ NOT ] SIMILAR TO expression
+func (p *parser) similarTo(prod string) error {
+	p.take(kw.SIMILAR)
+	if err := p.want(prod, kw.TO); err != nil {
+		return err
+	}
+	return p.operand(prod)
 }
