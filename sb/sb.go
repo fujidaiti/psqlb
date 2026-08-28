@@ -5,9 +5,9 @@
 //	sb.ToSQL(
 //		SELECT, UsersID, UsersName,
 //		FROM, Users,
-//		WHERE, sb.P(UsersCreated, UsersID), LT, sb.P(sb.V("2025-06-01"), sb.V(500)),
+//		WHERE, sb.P(UsersCreated, UsersID), "<", sb.P("2025-06-01", 500),
 //		ORDER, BY, UsersCreated, DESC, UsersID, DESC, NULLS, LAST,
-//		LIMIT, sb.V(20),
+//		LIMIT, 20,
 //	)
 //
 //	// SELECT users.id, users.name
@@ -34,10 +34,10 @@
 //	)
 //
 // That is the whole reason for the split. Dot-importing one package that held
-// both would also put P, F, I, V, RawExpr and RawOp into the user's file scope,
+// both would also put P, F, I, Arg and RawExpr into the user's file scope,
 // where they collide with ordinary Go names and no longer look different from
-// the SQL vocabulary. The prefix is what lets them be this short: sb.V(18) is
-// unambiguous where a bare V(18) would not be.
+// the SQL vocabulary. The prefix is what lets them be this short: sb.I(x) is
+// unambiguous where a bare I(x) would not be.
 //
 // Each keyword is declared once, in kw, and this package compares against those
 // same constants, so the spelling a user writes and the value the parser
@@ -45,8 +45,8 @@
 //
 // The token types are in internal/tok rather than in kw, so that a dot-import
 // brings SQL words into scope and nothing else. Token is the one name aliased
-// out of it, by this package, because a user needs to name it: it is the
-// parameter type of ToSQL, and a statement assembled in pieces is a []Token.
+// out of it, by this package, because a user can see it: it is what Arg and
+// RawExpr return. A statement assembled in pieces is a []any.
 // Nothing else about the types is public, so a user cannot declare a keyword of
 // their own. That matters more here than it would in a renderer: a keyword the
 // parser does not know is a keyword the parser cannot place.
@@ -111,7 +111,7 @@
 //	Keyword                  | a constant from kw        | SELECT FROM WHERE IN OVER
 //	Operator                 | a constant, or sb.RawOp() | EQ LIKE, sb.RawOp("@>")
 //	Identifier               | sb.I                      | UsersID
-//	Value                    | sb.V()                    | sb.V(42)
+//	Value                    | a plain Go value          | 42, "active", nil
 //	Group                    | sb.P(...)                 | sb.P(x, y) -> (x, y)
 //	Function call            | sb.F(name, ...)           | sb.F("COUNT", STAR)
 //	Hand-written expression  | sb.RawExpr()              | sb.RawExpr("x = $0", 1)
@@ -167,7 +167,7 @@
 // group holds is decided by the position it is written in:
 //
 //	FROM, sb.P(SELECT, ...), AS, sb.I("x")       // a subquery, aliased
-//	IN, sb.P(sb.V("active"), sb.V("trial"))      // an expression list
+//	IN, sb.P("active", "trial")                  // an expression list
 //	IN, sb.P(SELECT, OrdersUserID, FROM, Orders) // a subquery
 //	WHERE, sb.P(a, OR, b)                        // a parenthesised condition
 //	WHERE, sb.P(a, b), EQ, sb.P(x, y)            // two row constructors
@@ -178,9 +178,9 @@
 //
 // There is no way to nest a P without parentheses and no automatic removal of
 // them. To reuse a fragment where parentheses are unwanted, keep it as a
-// []Token and spread it:
+// []any and spread it:
 //
-//	inner := []sb.Token{SELECT, OrdersUserID, FROM, Orders}
+//	inner := []any{SELECT, OrdersUserID, FROM, Orders}
 //	sb.ToSQL(SELECT, STAR, FROM, Users, WHERE, UsersID, IN, sb.P(inner...))
 //
 // One more level of nesting is one more pair of parentheses, and after IN it is
@@ -355,16 +355,23 @@ type I string
 
 func (I) SQLToken() {}
 
-// value is what V produces.
+// value is what Arg and normalization produce.
 type value struct{ v any }
 
 func (value) SQLToken() {}
 
-// V binds a value and produces its placeholder.
+// Arg binds a value and produces its placeholder. A plain Go value is bound
+// already, so this is not how a value is normally written: it is the override
+// for the two cases normalization gets wrong.
 //
-//	ToSQL(SELECT, STAR, FROM, Users, WHERE, UsersAge, GTE, V(18))
-//	// SELECT * FROM users WHERE users.age >= $1
-func V(v any) Token { return value{v} }
+// The first is a value made only of operator characters, which the lexical
+// rule would take for an operator:
+//
+//	LIKE, Arg("%") // users.name LIKE $1
+//
+// The second is a []any, which is taken for a fragment that was meant to be
+// spread.
+func Arg(v any) Token { return value{v} }
 
 // rawFrag is what RawExpr produces. The fragment is split at its "$0" markers
 // when it is written, so a malformed fragment is caught at the call rather than

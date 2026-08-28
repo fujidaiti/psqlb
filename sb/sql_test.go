@@ -83,8 +83,8 @@ func TestBasic(t *testing.T) {
 			SELECT, UsersID, UsersName,
 			FROM, Users,
 			WHERE,
-			UsersID, EQ, sb.V(0), AND,
-			UsersName, GT, sb.V("name"), AND,
+			UsersID, EQ, 0, AND,
+			UsersName, GT, "name", AND,
 			sb.P(UsersIsPaid, OR, UsersHasTicket),
 		),
 		"SELECT users.id, users.name"+
@@ -106,9 +106,9 @@ func TestKeyset(t *testing.T) {
 		stmt(
 			SELECT, UsersID,
 			FROM, Users,
-			WHERE, sb.P(UsersCreated, UsersID), LT, sb.P(sb.V("2025-06-01"), sb.V(500)),
+			WHERE, sb.P(UsersCreated, UsersID), LT, sb.P("2025-06-01", 500),
 			ORDER, BY, UsersCreated, DESC, UsersID, DESC, NULLS, LAST,
-			LIMIT, sb.V(20),
+			LIMIT, 20,
 		),
 		"SELECT users.id"+
 			" FROM users"+
@@ -123,9 +123,9 @@ func TestKeyset(t *testing.T) {
 func TestUnionWithLimit(t *testing.T) {
 	assertSQL(t,
 		stmt(
-			sb.P(SELECT, UsersID, FROM, Users, ORDER, BY, UsersID, LIMIT, sb.V(10)),
+			sb.P(SELECT, UsersID, FROM, Users, ORDER, BY, UsersID, LIMIT, 10),
 			UNION, ALL,
-			sb.P(SELECT, OrdersUserID, FROM, Orders, ORDER, BY, OrdersID, LIMIT, sb.V(10)),
+			sb.P(SELECT, OrdersUserID, FROM, Orders, ORDER, BY, OrdersID, LIMIT, 10),
 		),
 		"(SELECT users.id FROM users ORDER BY users.id LIMIT $1)"+
 			" UNION ALL"+
@@ -144,8 +144,8 @@ func TestOperators(t *testing.T) {
 			FROM, Users,
 			WHERE,
 			UsersMeta, sb.RawOp("@>"), sb.RawExpr(`'{"vip": true}'`), AND,
-			UsersName, sb.RawOp("~"), sb.V("^a"), AND,
-			UsersStatus, IS, DISTINCT, FROM, sb.V("banned"), AND,
+			UsersName, sb.RawOp("~"), "^a", AND,
+			UsersStatus, IS, DISTINCT, FROM, "banned", AND,
 			UsersEmail, IS, NOT, NULL,
 		),
 		`SELECT users.id`+
@@ -170,7 +170,7 @@ func TestRawWithValues(t *testing.T) {
 			WHERE,
 			sb.RawExpr("users.meta->'profile'->>'city' = $0", "Tokyo"), AND,
 			sb.RawExpr("users.meta @> $0::jsonb", `{"vip": true}`), AND,
-			UsersStatus, EQ, sb.V("active"),
+			UsersStatus, EQ, "active",
 		),
 		"SELECT users.id"+
 			" FROM users"+
@@ -190,7 +190,7 @@ func TestTypecast(t *testing.T) {
 		stmt(
 			SELECT, UsersID,
 			FROM, Users,
-			WHERE, UsersMeta, sb.RawOp("@>"), sb.V(`{"vip": true}`), TYPECAST, sb.I("jsonb"),
+			WHERE, UsersMeta, sb.RawOp("@>"), `{"vip": true}`, TYPECAST, sb.I("jsonb"),
 		),
 		"SELECT users.id"+
 			" FROM users"+
@@ -249,9 +249,9 @@ func TestCaseExpr(t *testing.T) {
 			SELECT,
 			UsersID,
 			CASE,
-			WHEN, UsersAge, GTE, sb.V(18), THEN, sb.V("adult"),
-			WHEN, UsersAge, GTE, sb.V(13), THEN, sb.V("teen"),
-			ELSE, sb.V("child"),
+			WHEN, UsersAge, GTE, 18, THEN, "adult",
+			WHEN, UsersAge, GTE, 13, THEN, "teen",
+			ELSE, "child",
 			END, AS, sb.I("bucket"),
 			FROM, Users,
 		),
@@ -275,8 +275,8 @@ func TestUpsert(t *testing.T) {
 		stmt(
 			INSERT, INTO, Users, sb.P(sb.I("name"), sb.I("email")),
 			VALUES,
-			sb.P(sb.V("bob"), sb.V("bob@x")),
-			sb.P(sb.V("amy"), sb.V("amy@x")),
+			sb.P("bob", "bob@x"),
+			sb.P("amy", "amy@x"),
 			ON, CONFLICT, sb.P(sb.I("email")),
 			DO, UPDATE, SET, UsersName, EQ, sb.I("excluded.name"),
 			RETURNING, UsersID,
@@ -297,9 +297,9 @@ func TestUpsert(t *testing.T) {
 func TestUpdateFrom(t *testing.T) {
 	assertSQL(t,
 		stmt(
-			UPDATE, Users, SET, UsersStatus, EQ, sb.V("vip"),
+			UPDATE, Users, SET, UsersStatus, EQ, "vip",
 			FROM, Orders,
-			WHERE, OrdersUserID, EQ, UsersID, AND, OrdersTotal, GT, sb.V(10000),
+			WHERE, OrdersUserID, EQ, UsersID, AND, OrdersTotal, GT, 10000,
 		),
 		"UPDATE users SET status = $1"+
 			" FROM orders"+
@@ -346,7 +346,7 @@ func TestLateral(t *testing.T) {
 				FROM, Orders,
 				WHERE, OrdersUserID, EQ, UsersID,
 				ORDER, BY, OrdersTotal, DESC,
-				LIMIT, sb.V(3),
+				LIMIT, 3,
 			),
 			AS, sb.I("t"), ON, TRUE,
 		),
@@ -370,7 +370,7 @@ func TestRecursiveCTE(t *testing.T) {
 			sb.P(
 				SELECT, UsersID, UsersParentID,
 				FROM, Users,
-				WHERE, UsersID, EQ, sb.V(9),
+				WHERE, UsersID, EQ, 9,
 
 				UNION, ALL,
 
@@ -403,18 +403,18 @@ func TestNested(t *testing.T) {
 	inner := []any{
 		SELECT, OrdersUserID,
 		FROM, Orders,
-		WHERE, OrdersTotal, GT, sb.V(100),
+		WHERE, OrdersTotal, GT, 100,
 	}
 	middle := sb.P(
 		SELECT, UsersID,
 		FROM, Users,
-		WHERE, UsersID, IN, sb.P(inner...), AND, UsersAge, GT, sb.V(18),
+		WHERE, UsersID, IN, sb.P(inner...), AND, UsersAge, GT, 18,
 	)
 	assertSQL(t,
 		stmt(
 			SELECT, sb.F("COUNT", STAR),
 			FROM, middle, AS, sb.I("x"),
-			WHERE, sb.I("x.id"), LT, sb.V(1000),
+			WHERE, sb.I("x.id"), LT, 1000,
 		),
 		"SELECT COUNT(*)"+
 			" FROM (SELECT users.id"+
@@ -432,13 +432,13 @@ func TestNested(t *testing.T) {
 // IN takes a sb.P either way, holding a list or a subquery according to the
 // keywords inside it. ANY takes a subquery: "= ANY" does not accept a list.
 func TestInExistsNot(t *testing.T) {
-	sub := []any{SELECT, sb.V(1), FROM, Orders, WHERE, OrdersUserID, EQ, UsersID}
+	sub := []any{SELECT, 1, FROM, Orders, WHERE, OrdersUserID, EQ, UsersID}
 	assertSQL(t,
 		stmt(
 			SELECT, UsersID,
 			FROM, Users,
 			WHERE,
-			UsersStatus, IN, sb.P(sb.V("active"), sb.V("trial")), AND,
+			UsersStatus, IN, sb.P("active", "trial"), AND,
 			NOT, EXISTS, sb.P(sub...), AND,
 			UsersID, EQ, ANY, sb.P(SELECT, OrdersUserID, FROM, Orders),
 		),
@@ -495,21 +495,37 @@ func TestDynamic(t *testing.T) {
 				conds = append(conds, tokens...)
 			}
 			if c.status != "" {
-				add(UsersStatus, EQ, sb.V(c.status))
+				add(UsersStatus, EQ, c.status)
 			}
 			if c.cursor > 0 {
-				add(UsersID, GT, sb.V(c.cursor))
+				add(UsersID, GT, c.cursor)
 			}
 
 			parts := []any{SELECT, UsersID, FROM, Users}
 			if len(conds) > 0 {
 				parts = append(append(parts, WHERE), conds...)
 			}
-			parts = append(parts, ORDER, BY, UsersID, LIMIT, sb.V(20))
+			parts = append(parts, ORDER, BY, UsersID, LIMIT, 20)
 
 			assertSQL(t, parts, c.sql, c.args...)
 		})
 	}
+}
+
+// A value made only of operator characters would be taken for an operator by
+// the lexical rule, so sb.Arg is the override. That is the whole reason it
+// exists, since every other value is written as itself.
+func TestArg(t *testing.T) {
+	assertSQL(t,
+		stmt(SELECT, UsersID, FROM, Users, WHERE, UsersName, LIKE, sb.Arg("%")),
+		"SELECT users.id FROM users WHERE users.name LIKE $1",
+		"%",
+	)
+	// Without it, "%" is an operator and lands where an operand belongs.
+	assertErr(t,
+		stmt(SELECT, UsersID, FROM, Users, WHERE, UsersName, LIKE, "%"),
+		"expected an expression",
+	)
 }
 
 // nil is a value like any other and is bound. It used to mean "this token is

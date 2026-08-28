@@ -81,7 +81,7 @@ func TestSelectList(t *testing.T) {
 		},
 		{
 			name: "an expression as an item",
-			stmt: stmt(SELECT, UsersAge, GTE, sb.V(18), AS, sb.I("adult"), UsersName),
+			stmt: stmt(SELECT, UsersAge, GTE, 18, AS, sb.I("adult"), UsersName),
 			want: "SELECT users.age >= $1 AS adult, users.name",
 			args: []any{18},
 		},
@@ -119,7 +119,7 @@ func TestFromList(t *testing.T) {
 		},
 		{
 			name: "function call with alias",
-			stmt: stmt(SELECT, STAR, FROM, sb.F("generate_series", sb.V(1), sb.V(10)), AS, sb.I("g")),
+			stmt: stmt(SELECT, STAR, FROM, sb.F("generate_series", 1, 10), AS, sb.I("g")),
 			want: "SELECT * FROM generate_series($1, $2) AS g",
 			args: []any{1, 10},
 		},
@@ -136,13 +136,13 @@ func TestExpressions(t *testing.T) {
 	run(t, []gcase{
 		{
 			name: "named operator",
-			stmt: where(UsersAge, GTE, sb.V(18)),
+			stmt: where(UsersAge, GTE, 18),
 			want: head + "users.age >= $1",
 			args: []any{18},
 		},
 		{
 			name: "hand-written operator",
-			stmt: where(UsersMeta, sb.RawOp("@>"), sb.V("{}")),
+			stmt: where(UsersMeta, sb.RawOp("@>"), "{}"),
 			want: head + "users.meta @> $1",
 			args: []any{"{}"},
 		},
@@ -173,13 +173,13 @@ func TestExpressions(t *testing.T) {
 		},
 		{
 			name: "IS NOT DISTINCT FROM",
-			stmt: where(UsersStatus, IS, NOT, DISTINCT, FROM, sb.V("x")),
+			stmt: where(UsersStatus, IS, NOT, DISTINCT, FROM, "x"),
 			want: head + "users.status IS NOT DISTINCT FROM $1",
 			args: []any{"x"},
 		},
 		{
 			name: "IN a list",
-			stmt: where(UsersStatus, IN, sb.P(sb.V("a"), sb.V("b"))),
+			stmt: where(UsersStatus, IN, sb.P("a", "b")),
 			want: head + "users.status IN ($1, $2)",
 			args: []any{"a", "b"},
 		},
@@ -190,13 +190,13 @@ func TestExpressions(t *testing.T) {
 		},
 		{
 			name: "NOT IN",
-			stmt: where(UsersStatus, NOT, IN, sb.P(sb.V("a"))),
+			stmt: where(UsersStatus, NOT, IN, sb.P("a")),
 			want: head + "users.status NOT IN ($1)",
 			args: []any{"a"},
 		},
 		{
 			name: "BETWEEN",
-			stmt: where(UsersAge, BETWEEN, sb.V(13), AND, sb.V(19)),
+			stmt: where(UsersAge, BETWEEN, 13, AND, 19),
 			want: head + "users.age BETWEEN $1 AND $2",
 			args: []any{13, 19},
 		},
@@ -204,19 +204,19 @@ func TestExpressions(t *testing.T) {
 			// The AND belongs to BETWEEN, so the one after it is still the
 			// boolean operator.
 			name: "NOT BETWEEN, then AND",
-			stmt: where(UsersAge, NOT, BETWEEN, sb.V(13), AND, sb.V(19), AND, UsersIsPaid),
+			stmt: where(UsersAge, NOT, BETWEEN, 13, AND, 19, AND, UsersIsPaid),
 			want: head + "users.age NOT BETWEEN $1 AND $2 AND users.paid",
 			args: []any{13, 19},
 		},
 		{
 			name: "LIKE and NOT LIKE",
-			stmt: where(UsersName, LIKE, sb.V("a%"), AND, UsersName, NOT, ILIKE, sb.V("b%")),
+			stmt: where(UsersName, LIKE, "a%", AND, UsersName, NOT, ILIKE, "b%"),
 			want: head + "users.name LIKE $1 AND users.name NOT ILIKE $2",
 			args: []any{"a%", "b%"},
 		},
 		{
 			name: "EXISTS",
-			stmt: where(EXISTS, sb.P(SELECT, sb.V(1), FROM, Orders)),
+			stmt: where(EXISTS, sb.P(SELECT, 1, FROM, Orders)),
 			want: head + "EXISTS (SELECT $1 FROM orders)",
 			args: []any{1},
 		},
@@ -232,7 +232,7 @@ func TestExpressions(t *testing.T) {
 		},
 		{
 			name: "row constructor",
-			stmt: where(sb.P(UsersID, UsersAge), EQ, sb.P(sb.V(1), sb.V(2))),
+			stmt: where(sb.P(UsersID, UsersAge), EQ, sb.P(1, 2)),
 			want: head + "(users.id, users.age) = ($1, $2)",
 			args: []any{1, 2},
 		},
@@ -246,7 +246,7 @@ func TestExpressions(t *testing.T) {
 		},
 		{
 			name: "typecast",
-			stmt: where(UsersMeta, TYPECAST, sb.I("jsonb"), sb.RawOp("@>"), sb.V("{}")),
+			stmt: where(UsersMeta, TYPECAST, sb.I("jsonb"), sb.RawOp("@>"), "{}"),
 			want: head + "users.meta::jsonb @> $1",
 			args: []any{"{}"},
 		},
@@ -257,13 +257,13 @@ func TestExpressions(t *testing.T) {
 		},
 		{
 			name: "function call",
-			stmt: where(sb.F("lower", UsersName), EQ, sb.V("a")),
+			stmt: where(sb.F("lower", UsersName), EQ, "a"),
 			want: head + "lower(users.name) = $1",
 			args: []any{"a"},
 		},
 		{
 			name: "function call with DISTINCT",
-			stmt: where(sb.F("COUNT", DISTINCT, UsersID), GT, sb.V(1)),
+			stmt: where(sb.F("COUNT", DISTINCT, UsersID), GT, 1),
 			want: head + "COUNT(DISTINCT users.id) > $1",
 			args: []any{1},
 		},
@@ -274,7 +274,7 @@ func TestExpressions(t *testing.T) {
 		},
 		{
 			name: "CASE with an operand",
-			stmt: where(sb.P(CASE, UsersStatus, WHEN, sb.V("a"), THEN, sb.V(1), ELSE, sb.V(0), END), EQ, sb.V(1)),
+			stmt: where(sb.P(CASE, UsersStatus, WHEN, "a", THEN, 1, ELSE, 0, END), EQ, 1),
 			want: head + "(CASE users.status WHEN $1 THEN $2 ELSE $3 END) = $4",
 			args: []any{"a", 1, 0, 1},
 		},
@@ -303,7 +303,7 @@ func TestOrderLimitOffset(t *testing.T) {
 		},
 		{
 			name: "LIMIT and OFFSET",
-			stmt: stmt(SELECT, UsersID, FROM, Users, LIMIT, sb.V(10), OFFSET, sb.V(20)),
+			stmt: stmt(SELECT, UsersID, FROM, Users, LIMIT, 10, OFFSET, 20),
 			want: "SELECT users.id FROM users LIMIT $1 OFFSET $2",
 			args: []any{10, 20},
 		},
@@ -322,14 +322,14 @@ func TestInsert(t *testing.T) {
 	run(t, []gcase{
 		{
 			name: "one row",
-			stmt: stmt(INSERT, INTO, Users, VALUES, sb.P(sb.V("a"), sb.V("b"))),
+			stmt: stmt(INSERT, INTO, Users, VALUES, sb.P("a", "b")),
 			want: "INSERT INTO users VALUES ($1, $2)",
 			args: []any{"a", "b"},
 		},
 		{
 			name: "named columns and several rows",
 			stmt: stmt(INSERT, INTO, Users, sb.P(sb.I("name"), sb.I("email")),
-				VALUES, sb.P(sb.V("a"), sb.V("b")), sb.P(sb.V("c"), DEFAULT)),
+				VALUES, sb.P("a", "b"), sb.P("c", DEFAULT)),
 			want: "INSERT INTO users (name, email) VALUES ($1, $2), ($3, DEFAULT)",
 			args: []any{"a", "b", "c"},
 		},
@@ -342,7 +342,7 @@ func TestInsert(t *testing.T) {
 		},
 		{
 			name: "DO NOTHING",
-			stmt: stmt(INSERT, INTO, Users, VALUES, sb.P(sb.V("a")),
+			stmt: stmt(INSERT, INTO, Users, VALUES, sb.P("a"),
 				ON, CONFLICT, DO, NOTHING),
 			want: "INSERT INTO users VALUES ($1) ON CONFLICT DO NOTHING",
 			args: []any{"a"},
@@ -352,10 +352,10 @@ func TestInsert(t *testing.T) {
 			// qualifier from the target on the left of the "=" only, so the
 			// expression on the right keeps its own.
 			name: "DO UPDATE with a condition",
-			stmt: stmt(INSERT, INTO, Users, VALUES, sb.P(sb.V("a")),
+			stmt: stmt(INSERT, INTO, Users, VALUES, sb.P("a"),
 				ON, CONFLICT, sb.P(sb.I("email")),
 				DO, UPDATE, SET, UsersName, EQ, sb.I("excluded.name"),
-				WHERE, UsersStatus, NE, sb.V("banned"),
+				WHERE, UsersStatus, NE, "banned",
 				RETURNING, UsersID, AS, sb.I("i")),
 			want: "INSERT INTO users VALUES ($1)" +
 				" ON CONFLICT (email)" +
@@ -373,9 +373,9 @@ func TestUpdate(t *testing.T) {
 		{
 			name: "several assignments",
 			stmt: stmt(UPDATE, Users, SET,
-				UsersStatus, EQ, sb.V("vip"),
+				UsersStatus, EQ, "vip",
 				UsersName, EQ, sb.F("lower", UsersName),
-				WHERE, UsersID, EQ, sb.V(1)),
+				WHERE, UsersID, EQ, 1),
 			want: "UPDATE users SET status = $1, name = lower(users.name) WHERE users.id = $2",
 			args: []any{"vip", 1},
 		},
@@ -384,7 +384,7 @@ func TestUpdate(t *testing.T) {
 			// unqualified for the same reason the single-column form's are.
 			name: "the multi-column form",
 			stmt: stmt(UPDATE, Users, SET,
-				sb.P(UsersName, UsersStatus), EQ, sb.P(sb.V("a"), sb.V("b"))),
+				sb.P(UsersName, UsersStatus), EQ, sb.P("a", "b")),
 			want: "UPDATE users SET (name, status) = ($1, $2)",
 			args: []any{"a", "b"},
 		},
@@ -402,7 +402,7 @@ func TestDelete(t *testing.T) {
 	run(t, []gcase{
 		{
 			name: "with a condition",
-			stmt: stmt(DELETE, FROM, Users, WHERE, UsersID, EQ, sb.V(1)),
+			stmt: stmt(DELETE, FROM, Users, WHERE, UsersID, EQ, 1),
 			want: "DELETE FROM users WHERE users.id = $1",
 			args: []any{1},
 		},
@@ -492,7 +492,7 @@ func TestGroupBy(t *testing.T) {
 			name: "HAVING",
 			stmt: stmt(SELECT, UsersID, sb.F("COUNT", STAR), FROM, Users,
 				GROUP, BY, UsersID,
-				HAVING, sb.F("COUNT", STAR), GT, sb.V(1)),
+				HAVING, sb.F("COUNT", STAR), GT, 1),
 			want: "SELECT users.id, COUNT(*) FROM users" +
 				" GROUP BY users.id" +
 				" HAVING COUNT(*) > $1",
@@ -510,9 +510,9 @@ func TestGroupBy(t *testing.T) {
 			stmt: stmt(SELECT, UsersID, FROM, Users,
 				WHERE, UsersIsPaid,
 				GROUP, BY, UsersID,
-				HAVING, sb.F("COUNT", STAR), GT, sb.V(1),
+				HAVING, sb.F("COUNT", STAR), GT, 1,
 				ORDER, BY, UsersID,
-				LIMIT, sb.V(10), OFFSET, sb.V(5)),
+				LIMIT, 10, OFFSET, 5),
 			want: "SELECT users.id FROM users" +
 				" WHERE users.paid" +
 				" GROUP BY users.id" +
@@ -541,7 +541,7 @@ func TestSetOperations(t *testing.T) {
 			name: "three terms",
 			stmt: stmt(SELECT, UsersID, FROM, Users,
 				INTERSECT, SELECT, OrdersUserID, FROM, Orders,
-				UNION, SELECT, sb.V(1)),
+				UNION, SELECT, 1),
 			want: "SELECT users.id FROM users" +
 				" INTERSECT SELECT orders.user_id FROM orders" +
 				" UNION SELECT $1",
@@ -584,7 +584,7 @@ func TestWindowFunctions(t *testing.T) {
 			name: "a frame with an offset bound",
 			stmt: stmt(SELECT, sb.F("SUM", OrdersTotal), OVER, sb.P(
 				ORDER, BY, OrdersID,
-				ROWS, BETWEEN, sb.V(3), PRECEDING, AND, sb.V(1), FOLLOWING), FROM, Orders),
+				ROWS, BETWEEN, 3, PRECEDING, AND, 1, FOLLOWING), FROM, Orders),
 			want: "SELECT SUM(orders.total) OVER" +
 				" (ORDER BY orders.id ROWS BETWEEN $1 PRECEDING AND $2 FOLLOWING) FROM orders",
 			args: []any{3, 1},
@@ -606,7 +606,7 @@ func TestWindowFunctions(t *testing.T) {
 			// An aggregate may order its input, which is why a function's
 			// arguments are not simply an expression list.
 			name: "ORDER BY inside an aggregate",
-			stmt: stmt(SELECT, sb.F("string_agg", UsersName, sb.V(","), ORDER, BY, UsersID), FROM, Users),
+			stmt: stmt(SELECT, sb.F("string_agg", UsersName, ",", ORDER, BY, UsersID), FROM, Users),
 			want: "SELECT string_agg(users.name, $1 ORDER BY users.id) FROM users",
 			args: []any{","},
 		},
@@ -661,19 +661,19 @@ func TestRemainingExpressions(t *testing.T) {
 		},
 		{
 			name: "SIMILAR TO",
-			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersName, SIMILAR, TO, sb.V("%a%")),
+			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersName, SIMILAR, TO, "%a%"),
 			want: "SELECT users.id FROM users WHERE users.name SIMILAR TO $1",
 			args: []any{"%a%"},
 		},
 		{
 			name: "NOT SIMILAR TO",
-			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersName, NOT, SIMILAR, TO, sb.V("%a%")),
+			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersName, NOT, SIMILAR, TO, "%a%"),
 			want: "SELECT users.id FROM users WHERE users.name NOT SIMILAR TO $1",
 			args: []any{"%a%"},
 		},
 		{
 			name: "a bare VALUES query",
-			stmt: stmt(VALUES, sb.P(sb.V(1), sb.V("a")), sb.P(sb.V(2), sb.V("b"))),
+			stmt: stmt(VALUES, sb.P(1, "a"), sb.P(2, "b")),
 			want: "VALUES ($1, $2), ($3, $4)",
 			args: []any{1, "a", 2, "b"},
 		},

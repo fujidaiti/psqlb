@@ -48,12 +48,12 @@ func TestMissingGroup(t *testing.T) {
 		{
 			// The old engine produced "IN $1, $2", which Postgres rejects.
 			name: "IN without a group",
-			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersStatus, IN, sb.V(1), sb.V(2)),
+			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersStatus, IN, 1, 2),
 			want: "a parenthesised list or subquery after IN is required",
 		},
 		{
 			name: "EXISTS without a group",
-			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, EXISTS, sb.V(1)),
+			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, EXISTS, 1),
 			want: "a parenthesised subquery after EXISTS is required",
 		},
 		{
@@ -138,22 +138,22 @@ func TestKeywordPhrases(t *testing.T) {
 		},
 		{
 			name: "IS followed by nothing it accepts",
-			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, IS, sb.V(1)),
+			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, IS, 1),
 			want: "expected keyword NULL, TRUE, FALSE, UNKNOWN or DISTINCT",
 		},
 		{
 			name: "BETWEEN without AND",
-			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersAge, BETWEEN, sb.V(1), sb.V(2)),
+			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersAge, BETWEEN, 1, 2),
 			want: "expected keyword AND",
 		},
 		{
 			name: "WHEN without THEN",
-			stmt: stmt(SELECT, CASE, WHEN, UsersIsPaid, sb.V(1), END),
+			stmt: stmt(SELECT, CASE, WHEN, UsersIsPaid, 1, END),
 			want: "CASE: expected keyword THEN",
 		},
 		{
 			name: "CASE without END",
-			stmt: stmt(SELECT, CASE, WHEN, UsersIsPaid, THEN, sb.V(1)),
+			stmt: stmt(SELECT, CASE, WHEN, UsersIsPaid, THEN, 1),
 			want: "CASE: expected keyword END",
 		},
 	})
@@ -170,17 +170,17 @@ func TestStatementShape(t *testing.T) {
 		},
 		{
 			name: "an alias that is not an identifier",
-			stmt: stmt(SELECT, UsersID, AS, sb.V("x")),
+			stmt: stmt(SELECT, UsersID, AS, "x"),
 			want: "expected an alias written with sb.I",
 		},
 		{
 			name: "a type name that is not an identifier",
-			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersMeta, TYPECAST, sb.V(1)),
+			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersMeta, TYPECAST, 1),
 			want: "expected a type name written with sb.I or sb.RawExpr",
 		},
 		{
 			name: "a table position that takes no expression",
-			stmt: stmt(SELECT, STAR, FROM, sb.V(1)),
+			stmt: stmt(SELECT, STAR, FROM, 1),
 			want: "FROM: expected a table name, a subquery or a function call",
 		},
 	})
@@ -197,7 +197,7 @@ func TestNotSupportedYet(t *testing.T) {
 		},
 		{
 			"ON CONFLICT ON CONSTRAINT",
-			stmt(INSERT, INTO, Users, VALUES, sb.P(sb.V(1)), ON, CONFLICT, ON, sb.I("c")),
+			stmt(INSERT, INTO, Users, VALUES, sb.P(1), ON, CONFLICT, ON, sb.I("c")),
 			"ON CONFLICT ON CONSTRAINT",
 		},
 	}
@@ -239,17 +239,17 @@ func TestWriteStatements(t *testing.T) {
 	runErrs(t, []ecase{
 		{
 			name: "UPDATE without SET",
-			stmt: stmt(UPDATE, Users, WHERE, UsersID, EQ, sb.V(1)),
+			stmt: stmt(UPDATE, Users, WHERE, UsersID, EQ, 1),
 			want: "UPDATE: expected keyword SET",
 		},
 		{
 			name: "an assignment without =",
-			stmt: stmt(UPDATE, Users, SET, UsersStatus, sb.V("vip")),
+			stmt: stmt(UPDATE, Users, SET, UsersStatus, "vip"),
 			want: `SET: expected operator "=", written EQ`,
 		},
 		{
 			name: "an assignment target that is not a name",
-			stmt: stmt(UPDATE, Users, SET, sb.V(1), EQ, sb.V(2)),
+			stmt: stmt(UPDATE, Users, SET, 1, EQ, 2),
 			want: "SET: expected a column name written with sb.I",
 		},
 		{
@@ -264,17 +264,17 @@ func TestWriteStatements(t *testing.T) {
 		},
 		{
 			name: "VALUES without a group",
-			stmt: stmt(INSERT, INTO, Users, VALUES, sb.V("a"), sb.V("b")),
+			stmt: stmt(INSERT, INTO, Users, VALUES, "a", "b"),
 			want: "a parenthesised row after VALUES is required",
 		},
 		{
 			name: "ON CONFLICT without DO",
-			stmt: stmt(INSERT, INTO, Users, VALUES, sb.P(sb.V("a")), ON, CONFLICT, NOTHING),
+			stmt: stmt(INSERT, INTO, Users, VALUES, sb.P("a"), ON, CONFLICT, NOTHING),
 			want: "ON CONFLICT: expected keyword DO",
 		},
 		{
 			name: "DO followed by neither NOTHING nor UPDATE",
-			stmt: stmt(INSERT, INTO, Users, VALUES, sb.P(sb.V("a")), ON, CONFLICT, DO, SET),
+			stmt: stmt(INSERT, INTO, Users, VALUES, sb.P("a"), ON, CONFLICT, DO, SET),
 			want: "ON CONFLICT: expected keyword NOTHING or UPDATE",
 		},
 	})
@@ -323,7 +323,7 @@ func TestWindowsAndCTEs(t *testing.T) {
 	runErrs(t, []ecase{
 		{
 			name: "OVER something that is neither a name nor a definition",
-			stmt: stmt(SELECT, sb.F("COUNT", STAR), OVER, sb.V(1), FROM, Users),
+			stmt: stmt(SELECT, sb.F("COUNT", STAR), OVER, 1, FROM, Users),
 			want: "expected a window name or a parenthesised window definition",
 		},
 		{
@@ -338,7 +338,7 @@ func TestWindowsAndCTEs(t *testing.T) {
 		},
 		{
 			name: "a frame bound with no direction",
-			stmt: stmt(SELECT, sb.F("COUNT", STAR), OVER, sb.P(ROWS, sb.V(3)), FROM, Users),
+			stmt: stmt(SELECT, sb.F("COUNT", STAR), OVER, sb.P(ROWS, 3), FROM, Users),
 			want: "frame clause: expected keyword PRECEDING or FOLLOWING",
 		},
 		{
@@ -354,7 +354,7 @@ func TestWindowsAndCTEs(t *testing.T) {
 		},
 		{
 			name: "COLLATE without a collation name",
-			stmt: stmt(SELECT, UsersID, FROM, Users, ORDER, BY, UsersName, COLLATE, sb.V("C")),
+			stmt: stmt(SELECT, UsersID, FROM, Users, ORDER, BY, UsersName, COLLATE, "C"),
 			want: "expected a collation name written with sb.I",
 		},
 		{
@@ -377,7 +377,7 @@ func TestWindowsAndCTEs(t *testing.T) {
 		},
 		{
 			name: "a fragment passed to sb.P as one slice",
-			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, IN, sb.P([]any{sb.V(1), sb.V(2)})),
+			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, IN, sb.P([]any{1, 2})),
 			want: `a slice of 2 items passed without "..."`,
 		},
 		{
