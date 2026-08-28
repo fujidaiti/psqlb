@@ -24,7 +24,7 @@ func Example() {
 		SELECT, usersID, usersName,
 		FROM, users,
 		WHERE, sb.S(usersCreated, usersID), LT, sb.S(sb.Lit("2025-06-01"), sb.Lit(500)),
-		ORDER_BY, usersCreated, DESC, usersID, DESC, NULLS_LAST,
+		ORDER, BY, usersCreated, DESC, usersID, DESC, NULLS, LAST,
 		LIMIT, sb.Lit(20),
 	)
 

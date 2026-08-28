@@ -1,79 +1,137 @@
-// Package kw holds the token kinds and the keyword types.
+// Package kw holds the token types that the two public packages share: the
+// keyword type and every keyword constant, and the operator type.
 //
-// It exists only so that the two public packages can share them: psqlb declares
-// the keyword constants and sb reads their kinds while walking a token list.
-// The names are exported because both packages need them, and the package is
-// internal so that they are not public API. A user therefore cannot name
-// ListKw or PrefixKw, and so cannot declare a keyword: a keyword the package
-// does not model is written with sb.Op or sb.Kw.
+// It exists so that psqlb can declare the keyword constants and sb can compare
+// the tokens it parses against the same values. The names are exported because
+// both packages need them, and the package is internal so that they are not
+// public API: a user cannot declare a keyword of their own, which matters more
+// under a parser than it did under a renderer, because a keyword the parser
+// does not know is a keyword the parser cannot place.
+//
+// There is one keyword type. What a keyword means is decided by the grammar
+// position it is parsed in, not by its Go type.
 package kw
 
-// Kind is what the walker needs to know about a token: whether it takes a comma
-// and what the token after it does. See the package doc of sb.
-type Kind int
+// Token is what every token in a statement satisfies. The method is exported
+// only because the token types of package sb must implement it from outside
+// this package; nothing calls it. A type declared outside these two packages
+// can satisfy it, but the parser switches on the concrete types it knows and
+// reports anything else as an error, so the set of usable tokens is closed.
+type Token interface{ SQLToken() }
 
+// Keyword is a single SQL keyword word. Compound phrases are written as
+// several constants in a row: GROUP, BY and IS, NOT, NULL.
+type Keyword string
+
+func (Keyword) SQLToken() {}
+
+// Operator is an operator symbol written by hand, which is what sb.Op
+// produces. Operators are not a fixed list, since extensions add their own, so
+// they are not enumerated here.
+type Operator string
+
+func (Operator) SQLToken() {}
+
+// The keyword vocabulary. Every one is a single word, so that a token list is
+// the SQL text word for word. Not all of them are parsed yet; one outside the
+// supported subset is reported as "not supported yet".
 const (
-	KindOperand Kind = iota // begins an item, clears glue
-	KindPrefix              // begins an item, sets glue
-	KindPostfix             // continues an item, clears glue
-	KindInfix               // continues an item, sets glue
-	KindList                // opens a comma-separated list
-	KindClause              // closes it, back to space-separated
+	// Statements and clauses.
+	SELECT    Keyword = "SELECT"
+	FROM      Keyword = "FROM"
+	WHERE     Keyword = "WHERE"
+	GROUP     Keyword = "GROUP"
+	BY        Keyword = "BY"
+	HAVING    Keyword = "HAVING"
+	WINDOW    Keyword = "WINDOW"
+	ORDER     Keyword = "ORDER"
+	LIMIT     Keyword = "LIMIT"
+	OFFSET    Keyword = "OFFSET"
+	INSERT    Keyword = "INSERT"
+	INTO      Keyword = "INTO"
+	VALUES    Keyword = "VALUES"
+	UPDATE    Keyword = "UPDATE"
+	SET       Keyword = "SET"
+	DELETE    Keyword = "DELETE"
+	USING     Keyword = "USING"
+	RETURNING Keyword = "RETURNING"
+	CONFLICT  Keyword = "CONFLICT"
+	DO        Keyword = "DO"
+	NOTHING   Keyword = "NOTHING"
+	WITH      Keyword = "WITH"
+	RECURSIVE Keyword = "RECURSIVE"
+
+	// Modifiers of the SELECT list and of a sort key.
+	ALL      Keyword = "ALL"
+	DISTINCT Keyword = "DISTINCT"
+	AS       Keyword = "AS"
+	ASC      Keyword = "ASC"
+	DESC     Keyword = "DESC"
+	NULLS    Keyword = "NULLS"
+	FIRST    Keyword = "FIRST"
+	LAST     Keyword = "LAST"
+
+	// Joins and set operations.
+	JOIN      Keyword = "JOIN"
+	LEFT      Keyword = "LEFT"
+	RIGHT     Keyword = "RIGHT"
+	FULL      Keyword = "FULL"
+	INNER     Keyword = "INNER"
+	OUTER     Keyword = "OUTER"
+	CROSS     Keyword = "CROSS"
+	NATURAL   Keyword = "NATURAL"
+	LATERAL   Keyword = "LATERAL"
+	ON        Keyword = "ON"
+	UNION     Keyword = "UNION"
+	INTERSECT Keyword = "INTERSECT"
+	EXCEPT    Keyword = "EXCEPT"
+
+	// Expressions.
+	AND       Keyword = "AND"
+	OR        Keyword = "OR"
+	NOT       Keyword = "NOT"
+	IS        Keyword = "IS"
+	NULL      Keyword = "NULL"
+	TRUE      Keyword = "TRUE"
+	FALSE     Keyword = "FALSE"
+	UNKNOWN   Keyword = "UNKNOWN"
+	IN        Keyword = "IN"
+	BETWEEN   Keyword = "BETWEEN"
+	EXISTS    Keyword = "EXISTS"
+	ANY       Keyword = "ANY"
+	SOME      Keyword = "SOME"
+	LIKE      Keyword = "LIKE"
+	ILIKE     Keyword = "ILIKE"
+	SIMILAR   Keyword = "SIMILAR"
+	TO        Keyword = "TO"
+	COLLATE   Keyword = "COLLATE"
+	CASE      Keyword = "CASE"
+	WHEN      Keyword = "WHEN"
+	THEN      Keyword = "THEN"
+	ELSE      Keyword = "ELSE"
+	END       Keyword = "END"
+	DEFAULT   Keyword = "DEFAULT"
+	FILTER    Keyword = "FILTER"
+	OVER      Keyword = "OVER"
+	PARTITION Keyword = "PARTITION"
+
+	// Window frames.
+	ROW       Keyword = "ROW"
+	ROWS      Keyword = "ROWS"
+	RANGE     Keyword = "RANGE"
+	GROUPS    Keyword = "GROUPS"
+	UNBOUNDED Keyword = "UNBOUNDED"
+	PRECEDING Keyword = "PRECEDING"
+	FOLLOWING Keyword = "FOLLOWING"
+	CURRENT   Keyword = "CURRENT"
+
+	// Two tokens that are not words. They are keywords because the parser
+	// recognises them by value at particular grammar positions: STAR is an
+	// expression on its own, and TYPECAST is followed by a type name rather
+	// than by an expression.
+	STAR     Keyword = "*"
+	TYPECAST Keyword = "::"
+
+	// MATERIALIZED qualifies a CTE body.
+	MATERIALIZED Keyword = "MATERIALIZED"
 )
-
-// Kinded is implemented by every token that is not an operand, and by
-// sb.Statement, which is an operand except for the prefix group of DISTINCT ON.
-// sb.Id, EXCLUDED and any Clause implemented outside these packages do not
-// implement it, and are operands: that is the common case, so it is the
-// default.
-type Kinded interface{ SQLKind() Kind }
-
-// KindOf takes an any rather than an sb.Clause, since sb is the package that
-// defines Clause and this one must not import it.
-func KindOf(c any) Kind {
-	if k, ok := c.(Kinded); ok {
-		return k.SQLKind()
-	}
-	return KindOperand
-}
-
-// The keyword types. Their underlying type is string so that the keyword
-// constants of package psqlb can be declared with const, which is what lets the
-// walker read a token's kind before building it.
-type (
-	OperandKw string
-	PrefixKw  string
-	PostfixKw string
-	InfixKw   string
-	ListKw    string
-	ClauseKw  string
-
-	// SetKw is a list keyword that also opens the scope in which a
-	// table-qualified column name is emitted bare. SET is its only value.
-	SetKw string
-
-	// ExcludedKw consumes the token after it. EXCLUDED is its only value.
-	ExcludedKw string
-)
-
-func (k OperandKw) SQLKind() Kind { return KindOperand }
-func (k PrefixKw) SQLKind() Kind  { return KindPrefix }
-func (k PostfixKw) SQLKind() Kind { return KindPostfix }
-func (k InfixKw) SQLKind() Kind   { return KindInfix }
-func (k ListKw) SQLKind() Kind    { return KindList }
-func (k ClauseKw) SQLKind() Kind  { return KindClause }
-func (k SetKw) SQLKind() Kind     { return KindList }
-
-func (k OperandKw) BuildSQL(args []any) (string, []any, error) { return string(k), args, nil }
-func (k PrefixKw) BuildSQL(args []any) (string, []any, error)  { return string(k), args, nil }
-func (k PostfixKw) BuildSQL(args []any) (string, []any, error) { return string(k), args, nil }
-func (k InfixKw) BuildSQL(args []any) (string, []any, error)   { return string(k), args, nil }
-func (k ListKw) BuildSQL(args []any) (string, []any, error)    { return string(k), args, nil }
-func (k ClauseKw) BuildSQL(args []any) (string, []any, error)  { return string(k), args, nil }
-func (k SetKw) BuildSQL(args []any) (string, []any, error)     { return string(k), args, nil }
-
-// EXCLUDED and sb.Id satisfy sb.Clause so that they can be written as tokens,
-// but the walker intercepts both types before building them: EXCLUDED to read
-// the name after it, Id to strip a qualifier inside SET. This method is
-// therefore never reached from the walker.
-func (k ExcludedKw) BuildSQL(args []any) (string, []any, error) { return string(k), args, nil }

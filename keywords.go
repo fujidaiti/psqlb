@@ -1,6 +1,6 @@
-// Package psqlb holds the SQL keywords of the psqlb DSL, and nothing else. It
-// is meant to be dot-imported, so that a statement reads like the SQL it
-// produces:
+// Package psqlb holds the SQL keywords and operators of the psqlb DSL, and
+// nothing else. It is meant to be dot-imported, so that a statement reads like
+// the SQL it produces:
 //
 //	import (
 //		. "github.com/fujidaiti/psqlb"
@@ -9,209 +9,166 @@
 //
 //	sb.S(SELECT, UsersID, FROM, Users, WHERE, UsersAge, GTE, sb.Lit(18))
 //
-// Everything that is not a SQL keyword — S, Func, Id, Lit, Raw, Op, Kw — lives
-// in package sb and is written with that prefix, so that dot-importing
-// this package brings only SQL vocabulary into scope. The design document is
-// the package doc comment of sb.
+// Everything that is not a SQL keyword — S, Func, Id, Lit, Raw, Op — lives in
+// package sb and is written with that prefix, so that dot-importing this
+// package brings only SQL vocabulary into scope. The design document is the
+// package doc comment of sb.
+//
+// Every keyword is one word. A phrase is written as the words it is made of:
+// GROUP, BY and IS, NOT, NULL and LEFT, OUTER, JOIN. The parser knows where
+// each one may appear, so a keyword needs no Go type, no second spelling for a
+// second role, and no parentheses of its own.
 package psqlb
 
 import (
 	"github.com/fujidaiti/psqlb/internal/kw"
-	"github.com/fujidaiti/psqlb/sb"
 )
 
 // ===========================================================================
-// Keyword constants
+// Keywords
+// ===========================================================================
+//
+// The constants are declared in internal/kw and re-exported here, so that the
+// spelling a user writes and the value the parser compares against are the same
+// thing. A keyword the parser does not know cannot be written, since kw is
+// internal.
+
+// Statements and clauses.
+const (
+	SELECT    = kw.SELECT
+	FROM      = kw.FROM
+	WHERE     = kw.WHERE
+	GROUP     = kw.GROUP
+	BY        = kw.BY
+	HAVING    = kw.HAVING
+	WINDOW    = kw.WINDOW
+	ORDER     = kw.ORDER
+	LIMIT     = kw.LIMIT
+	OFFSET    = kw.OFFSET
+	INSERT    = kw.INSERT
+	INTO      = kw.INTO
+	VALUES    = kw.VALUES
+	UPDATE    = kw.UPDATE
+	SET       = kw.SET
+	DELETE    = kw.DELETE
+	USING     = kw.USING
+	RETURNING = kw.RETURNING
+	CONFLICT  = kw.CONFLICT
+	DO        = kw.DO
+	NOTHING   = kw.NOTHING
+	WITH      = kw.WITH
+	RECURSIVE = kw.RECURSIVE
+)
+
+// Modifiers of the SELECT list and of a sort key.
+const (
+	ALL      = kw.ALL
+	DISTINCT = kw.DISTINCT
+	AS       = kw.AS
+	ASC      = kw.ASC
+	DESC     = kw.DESC
+	NULLS    = kw.NULLS
+	FIRST    = kw.FIRST
+	LAST     = kw.LAST
+)
+
+// Joins and set operations.
+const (
+	JOIN      = kw.JOIN
+	LEFT      = kw.LEFT
+	RIGHT     = kw.RIGHT
+	FULL      = kw.FULL
+	INNER     = kw.INNER
+	OUTER     = kw.OUTER
+	CROSS     = kw.CROSS
+	NATURAL   = kw.NATURAL
+	LATERAL   = kw.LATERAL
+	ON        = kw.ON
+	UNION     = kw.UNION
+	INTERSECT = kw.INTERSECT
+	EXCEPT    = kw.EXCEPT
+)
+
+// Expressions. A keyword that SQL always follows with a parenthesised group —
+// IN, EXISTS, ANY, FILTER, OVER — is a constant like any other, and the group
+// after it is written with sb.S. The parser requires it to be there.
+const (
+	AND       = kw.AND
+	OR        = kw.OR
+	NOT       = kw.NOT
+	IS        = kw.IS
+	NULL      = kw.NULL
+	TRUE      = kw.TRUE
+	FALSE     = kw.FALSE
+	UNKNOWN   = kw.UNKNOWN
+	IN        = kw.IN
+	BETWEEN   = kw.BETWEEN
+	EXISTS    = kw.EXISTS
+	ANY       = kw.ANY
+	SOME      = kw.SOME
+	LIKE      = kw.LIKE
+	ILIKE     = kw.ILIKE
+	SIMILAR   = kw.SIMILAR
+	TO        = kw.TO
+	COLLATE   = kw.COLLATE
+	CASE      = kw.CASE
+	WHEN      = kw.WHEN
+	THEN      = kw.THEN
+	ELSE      = kw.ELSE
+	END       = kw.END
+	DEFAULT   = kw.DEFAULT
+	FILTER    = kw.FILTER
+	OVER      = kw.OVER
+	PARTITION = kw.PARTITION
+)
+
+// Window frames.
+const (
+	ROW       = kw.ROW
+	ROWS      = kw.ROWS
+	RANGE     = kw.RANGE
+	GROUPS    = kw.GROUPS
+	UNBOUNDED = kw.UNBOUNDED
+	PRECEDING = kw.PRECEDING
+	FOLLOWING = kw.FOLLOWING
+	CURRENT   = kw.CURRENT
+)
+
+// MATERIALIZED qualifies a CTE body.
+const MATERIALIZED = kw.MATERIALIZED
+
+// STAR is "*", the whole row. It is an expression on its own, in a SELECT list
+// and as the argument of a function.
+//
+//	SELECT, STAR, FROM, Users        // SELECT * FROM users
+//	sb.Func("COUNT", STAR)           // COUNT(*)
+const STAR = kw.STAR
+
+// TYPECAST is "::". The name after it is a type name rather than an
+// expression, and both are emitted with no spaces around the operator.
+//
+//	UsersMeta, TYPECAST, sb.Id("jsonb") // users.meta::jsonb
+//
+// It is spelled TYPECAST rather than CAST because PostgreSQL calls "::" a
+// typecast and reserves CAST for the CAST(x AS type) form, which is a different
+// syntax.
+const TYPECAST = kw.TYPECAST
+
+// ===========================================================================
+// Operators
 // ===========================================================================
 
-// List keywords open a comma-separated list. Everything until the next clause
-// keyword is joined with commas.
+// The operators that have a name here. Any other is written with sb.Op, since
+// operators are not a fixed list: extensions add their own.
+//
+// TODO: EQ, NE, GTE and the rest are not SQL spellings, which is a deviation
+// from the first golden rule. Go identifiers cannot be "=" or ">=", so the
+// alternative is sb.Op(">=") everywhere.
 const (
-	SELECT         kw.ListKw = "SELECT"
-	FROM           kw.ListKw = "FROM"
-	GROUP_BY       kw.ListKw = "GROUP BY"
-	ORDER_BY       kw.ListKw = "ORDER BY"
-	RETURNING      kw.ListKw = "RETURNING"
-	PARTITION_BY   kw.ListKw = "PARTITION BY"
-	WITH           kw.ListKw = "WITH"
-	WITH_RECURSIVE kw.ListKw = "WITH RECURSIVE"
-	VALUES         kw.ListKw = "VALUES"
+	EQ  kw.Operator = "="
+	NE  kw.Operator = "<>"
+	GT  kw.Operator = ">"
+	GTE kw.Operator = ">="
+	LT  kw.Operator = "<"
+	LTE kw.Operator = "<="
 )
-
-// SET is a list keyword that also strips the table qualifier from the name that
-// begins each assignment, since "SET users.status = ..." is not legal. The
-// right-hand side is left alone.
-//
-//	sb.S(UPDATE, Users, SET, UsersStatus, EQ, sb.Func("upper", UsersName))
-//	// UPDATE users SET status = upper(users.name)
-//
-// This is a deliberate exception to the second golden rule: SQL has no such
-// rule, and the DSL text differs from the SQL text. It is kept because writing
-// sb.Id("status") for every assignment is the common case and the qualified
-// constant is the one already at hand.
-const SET kw.SetKw = "SET"
-
-// Clause keywords close a comma-separated list and return to space separation.
-const (
-	WHERE  kw.ClauseKw = "WHERE"
-	HAVING kw.ClauseKw = "HAVING"
-	ON     kw.ClauseKw = "ON"
-	LIMIT  kw.ClauseKw = "LIMIT"
-	OFFSET kw.ClauseKw = "OFFSET"
-
-	UPDATE      kw.ClauseKw = "UPDATE"
-	DELETE_FROM kw.ClauseKw = "DELETE FROM"
-
-	// INSERT_INTO is followed by the table and, if the columns are named, by a
-	// sb.S of them. The names must be bare, since "INSERT INTO users
-	// (users.name)" is not legal, so write sb.Id("name") rather than UsersName.
-	//
-	//	INSERT_INTO, Users, sb.S(sb.Id("name"), sb.Id("email")), VALUES, sb.S(...)
-	//	// INSERT INTO users (name, email) VALUES (...)
-	INSERT_INTO kw.ClauseKw = "INSERT INTO"
-
-	// ON_CONFLICT takes a sb.S naming the conflict target, or nothing at all.
-	//
-	//	ON_CONFLICT, sb.S(sb.Id("email")), DO_UPDATE, SET, ...
-	//	ON_CONFLICT, DO_NOTHING
-	ON_CONFLICT kw.ClauseKw = "ON CONFLICT"
-
-	JOIN       kw.ClauseKw = "JOIN"
-	LEFT_JOIN  kw.ClauseKw = "LEFT JOIN"
-	INNER_JOIN kw.ClauseKw = "INNER JOIN"
-	CROSS_JOIN kw.ClauseKw = "CROSS JOIN"
-
-	UNION     kw.ClauseKw = "UNION"
-	UNION_ALL kw.ClauseKw = "UNION ALL"
-	INTERSECT kw.ClauseKw = "INTERSECT"
-	EXCEPT    kw.ClauseKw = "EXCEPT"
-
-	DO_UPDATE  kw.ClauseKw = "DO UPDATE"
-	DO_NOTHING kw.ClauseKw = "DO NOTHING"
-)
-
-// Infix tokens sit between two operands and keep the item open, so the operand
-// after them takes no comma.
-const (
-	AND kw.InfixKw = "AND"
-	OR  kw.InfixKw = "OR"
-
-	// TODO: EQ, NE, GTE and the rest are not SQL spellings, which
-	// is a deviation from the first golden rule. Go identifiers cannot be "="
-	// or ">=", so the alternative is sb.Op(">=") everywhere.
-	EQ    kw.InfixKw = "="
-	NE    kw.InfixKw = "<>"
-	GT    kw.InfixKw = ">"
-	GTE   kw.InfixKw = ">="
-	LT    kw.InfixKw = "<"
-	LTE   kw.InfixKw = "<="
-	LIKE  kw.InfixKw = "LIKE"
-	ILIKE kw.InfixKw = "ILIKE"
-	CAST  kw.InfixKw = "::"
-
-	// AS introduces an alias, and it is also how a CTE is named. The
-	// parentheses a CTE body always has come from its being a nested sb.S.
-	//
-	//	sb.S(sub, AS, sb.Id("n"))                     // (SELECT ...) AS n
-	//	sb.S(WITH, sb.Id("tree"), AS, body, SELECT, …) // WITH tree AS (SELECT ...) SELECT …
-	AS kw.InfixKw = "AS"
-
-	// MATERIALIZED is infix rather than a clause keyword, so that it does not
-	// close the WITH list and swallow the comma before the next CTE.
-	MATERIALIZED kw.InfixKw = "MATERIALIZED"
-
-	// WHEN, THEN and ELSE keep a CASE expression open, which is what lets one
-	// sit in the middle of a SELECT list without breaking the commas.
-	WHEN kw.InfixKw = "WHEN"
-	THEN kw.InfixKw = "THEN"
-	ELSE kw.InfixKw = "ELSE"
-)
-
-// Prefix tokens begin an item and keep it open, so the operand after them takes
-// no comma.
-const (
-	// NOT is correct in WHERE NOT a, in NOT, EXISTS(...) and in SELECT NOT flag.
-	// As a modifier inside a comma-separated list it is not; write
-	// sb.Op("NOT IN"), sb.S(...) there.
-	NOT kw.PrefixKw = "NOT"
-
-	DISTINCT kw.PrefixKw = "DISTINCT"
-
-	// LATERAL is a constant rather than a function, because it is not always
-	// followed by a parenthesised group of its own: in
-	// JOIN LATERAL unnest(a) AS t it applies to a function call.
-	LATERAL kw.PrefixKw = "LATERAL"
-
-	CASE kw.PrefixKw = "CASE"
-)
-
-// Postfix tokens attach to the operand before them and end the item, so the
-// operand after them starts a new one and takes a comma.
-const (
-	IS_NULL     kw.PostfixKw = "IS NULL"
-	IS_NOT_NULL kw.PostfixKw = "IS NOT NULL"
-
-	ASC         kw.PostfixKw = "ASC"
-	DESC        kw.PostfixKw = "DESC"
-	NULLS_FIRST kw.PostfixKw = "NULLS FIRST"
-	NULLS_LAST  kw.PostfixKw = "NULLS LAST"
-
-	END kw.PostfixKw = "END"
-)
-
-// Operands are complete expressions on their own.
-const (
-	STAR  kw.OperandKw = "*"
-	TRUE  kw.OperandKw = "TRUE"
-	FALSE kw.OperandKw = "FALSE"
-	NULL  kw.OperandKw = "NULL"
-)
-
-// EXCLUDED reads the name after it, so EXCLUDED, UsersName renders
-// EXCLUDED.name. The qualifier is stripped, since only the column name is legal
-// there.
-//
-// TODO: this breaks the second golden rule twice over: two tokens
-// produce one operand, and the name is rewritten. SQL has no such rule;
-// EXCLUDED.name is an ordinary qualified name.
-const EXCLUDED kw.ExcludedKw = "EXCLUDED"
-
-// The keywords SQL always follows with one parenthesised group are constants
-// like any other, and the group after them is written with sb.S. They are
-// infixes, because each sits between the expression before it and that group:
-//
-//	UsersStatus, IN, sb.S(sb.Lit("active"), sb.Lit("trial"))  // users.status IN ($1, $2)
-//	UsersID, IN, sb.S(SELECT, OrdersUserID, FROM, Orders)     // users.id IN (SELECT ...)
-//	UsersID, EQ, ANY, sb.S(SELECT, OrdersUserID, FROM, Orders)
-//	sb.Func("COUNT", STAR), FILTER, sb.S(WHERE, UsersIsPaid)  // COUNT(*) FILTER (WHERE users.paid)
-//	sb.Func("SUM", OrdersTotal), OVER, sb.S(PARTITION_BY, OrdersUserID)
-//	sb.Func("SUM", OrdersTotal), OVER, sb.Id("w")             // SUM(...) OVER w
-//
-// The same tokens one level deeper are a one-element list rather than a
-// subquery, which is legal SQL too:
-//
-//	UsersID, IN, sb.S(sb.S(SELECT, OrdersUserID, FROM, Orders)) // users.id IN ((SELECT ...))
-const (
-	IN     kw.InfixKw = "IN"
-	ANY    kw.InfixKw = "ANY"
-	FILTER kw.InfixKw = "FILTER"
-	OVER   kw.InfixKw = "OVER"
-)
-
-// EXISTS is a prefix rather than an infix, because it has no left operand.
-//
-//	WHERE, NOT, EXISTS, sb.S(SELECT, sb.Lit(1), FROM, Orders)
-const EXISTS kw.PrefixKw = "EXISTS"
-
-// DISTINCT_ON is the one keyword that still carries its own parentheses. As a
-// constant it would work as far as the group, but the group is an operand and
-// so ends the item, and the first column of the SELECT list would then take a
-// comma: "SELECT DISTINCT ON (users.id), users.id". Writing the parentheses
-// here keeps it glued past them.
-//
-//	SELECT, DISTINCT_ON(UsersID), UsersID, UsersName
-//	// SELECT DISTINCT ON (users.id) users.id, users.name
-//
-// TODO: either find a spelling that obeys the parentheses rule or record this as
-// a permanent exception.
-func DISTINCT_ON(items ...sb.Clause) sb.Clause { return sb.PrefixGroup("DISTINCT ON", items...) }
