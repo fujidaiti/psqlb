@@ -36,6 +36,10 @@ const (
 	OrdersCreated = sb.I("orders.created_at")
 )
 
+// stmt collects its arguments into a []sb.Token, so a test case can write
+// stmt(...) instead of []sb.Token{...} at each call to assertSQL or assertErr.
+func stmt(items ...sb.Token) []sb.Token { return items }
+
 // assertSQL builds s and compares both halves of the result. Every argument
 // bound by these examples is a comparable scalar, so == is enough, and it
 // avoids the empty-versus-nil slice question.
@@ -74,14 +78,14 @@ func assertErr(t *testing.T, stmt []sb.Token, wantSubstr string) {
 
 func TestBasic(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			SELECT, UsersID, UsersName,
 			FROM, Users,
 			WHERE,
 			UsersID, EQ, sb.V(0), AND,
 			UsersName, GT, sb.V("name"), AND,
 			sb.P(UsersIsPaid, OR, UsersHasTicket),
-		},
+		),
 		"SELECT users.id, users.name"+
 			" FROM users"+
 			" WHERE"+
@@ -98,13 +102,13 @@ func TestBasic(t *testing.T) {
 // before users.id rather than before DESC.
 func TestKeyset(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			SELECT, UsersID,
 			FROM, Users,
 			WHERE, sb.P(UsersCreated, UsersID), LT, sb.P(sb.V("2025-06-01"), sb.V(500)),
 			ORDER, BY, UsersCreated, DESC, UsersID, DESC, NULLS, LAST,
 			LIMIT, sb.V(20),
-		},
+		),
 		"SELECT users.id"+
 			" FROM users"+
 			" WHERE (users.created_at, users.id) < ($1, $2)"+
@@ -117,11 +121,11 @@ func TestKeyset(t *testing.T) {
 // Since nesting a sb.P adds parentheses, a set-operation term can carry LIMIT.
 func TestUnionWithLimit(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			sb.P(SELECT, UsersID, FROM, Users, ORDER, BY, UsersID, LIMIT, sb.V(10)),
 			UNION, ALL,
 			sb.P(SELECT, OrdersUserID, FROM, Orders, ORDER, BY, OrdersID, LIMIT, sb.V(10)),
-		},
+		),
 		"(SELECT users.id FROM users ORDER BY users.id LIMIT $1)"+
 			" UNION ALL"+
 			" (SELECT orders.user_id FROM orders ORDER BY orders.id LIMIT $2)",
@@ -134,7 +138,7 @@ func TestUnionWithLimit(t *testing.T) {
 // knows the phrases, so neither needs a constant or an escape hatch of its own.
 func TestOperators(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			SELECT, UsersID,
 			FROM, Users,
 			WHERE,
@@ -142,7 +146,7 @@ func TestOperators(t *testing.T) {
 			UsersName, sb.RawOp("~"), sb.V("^a"), AND,
 			UsersStatus, IS, DISTINCT, FROM, sb.V("banned"), AND,
 			UsersEmail, IS, NOT, NULL,
-		},
+		),
 		`SELECT users.id`+
 			` FROM users`+
 			` WHERE`+
@@ -159,14 +163,14 @@ func TestOperators(t *testing.T) {
 // where they are written instead of being split into separate tokens.
 func TestRawWithValues(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			SELECT, UsersID,
 			FROM, Users,
 			WHERE,
 			sb.RawExpr("users.meta->'profile'->>'city' = $0", "Tokyo"), AND,
 			sb.RawExpr("users.meta @> $0::jsonb", `{"vip": true}`), AND,
 			UsersStatus, EQ, sb.V("active"),
-		},
+		),
 		"SELECT users.id"+
 			" FROM users"+
 			" WHERE"+
@@ -182,11 +186,11 @@ func TestRawWithValues(t *testing.T) {
 // writes it.
 func TestTypecast(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			SELECT, UsersID,
 			FROM, Users,
 			WHERE, UsersMeta, sb.RawOp("@>"), sb.V(`{"vip": true}`), TYPECAST, sb.I("jsonb"),
-		},
+		),
 		"SELECT users.id"+
 			" FROM users"+
 			" WHERE users.meta @> $1::jsonb",
@@ -199,13 +203,13 @@ func TestTypecast(t *testing.T) {
 // follows it and no keyword has to carry parentheses of its own.
 func TestDistinctOn(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			SELECT,
 			DISTINCT, ON, sb.P(UsersID), UsersID,
 			UsersName,
 			FROM, Users,
 			ORDER, BY, UsersID, UsersCreated, DESC,
-		},
+		),
 		"SELECT"+
 			" DISTINCT ON (users.id) users.id,"+
 			" users.name"+
@@ -218,14 +222,14 @@ func TestDistinctOn(t *testing.T) {
 // belongs to the same select-list item.
 func TestFilterAndGroupBy(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			SELECT,
 			UsersID,
 			UsersName,
 			sb.F("COUNT", STAR), FILTER, sb.P(WHERE, UsersIsPaid), AS, sb.I("paid_count"),
 			FROM, Users,
 			GROUP, BY, UsersID, UsersName,
-		},
+		),
 		"SELECT"+
 			" users.id,"+
 			" users.name,"+
@@ -240,7 +244,7 @@ func TestFilterAndGroupBy(t *testing.T) {
 // they belong.
 func TestCaseExpr(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			SELECT,
 			UsersID,
 			CASE,
@@ -249,7 +253,7 @@ func TestCaseExpr(t *testing.T) {
 			ELSE, sb.V("child"),
 			END, AS, sb.I("bucket"),
 			FROM, Users,
-		},
+		),
 		"SELECT"+
 			" users.id,"+
 			" CASE"+
@@ -267,7 +271,7 @@ func TestCaseExpr(t *testing.T) {
 // expression to its right alone, so the two do not collide.
 func TestUpsert(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			INSERT, INTO, Users, sb.P(sb.I("name"), sb.I("email")),
 			VALUES,
 			sb.P(sb.V("bob"), sb.V("bob@x")),
@@ -275,7 +279,7 @@ func TestUpsert(t *testing.T) {
 			ON, CONFLICT, sb.P(sb.I("email")),
 			DO, UPDATE, SET, UsersName, EQ, sb.I("excluded.name"),
 			RETURNING, UsersID,
-		},
+		),
 		"INSERT INTO users (name, email)"+
 			" VALUES"+
 			" ($1, $2),"+
@@ -291,11 +295,11 @@ func TestUpsert(t *testing.T) {
 // closes the SET list, so orders.user_id keeps its qualifier.
 func TestUpdateFrom(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			UPDATE, Users, SET, UsersStatus, EQ, sb.V("vip"),
 			FROM, Orders,
 			WHERE, OrdersUserID, EQ, UsersID, AND, OrdersTotal, GT, sb.V(10000),
-		},
+		),
 		"UPDATE users SET status = $1"+
 			" FROM orders"+
 			" WHERE orders.user_id = users.id AND orders.total > $2",
@@ -307,7 +311,7 @@ func TestUpdateFrom(t *testing.T) {
 // spelled out word by word rather than folded into one hand-written fragment.
 func TestWindow(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			SELECT,
 			UsersName,
 			sb.F("SUM", OrdersTotal), OVER, sb.P(
@@ -316,7 +320,7 @@ func TestWindow(t *testing.T) {
 				ROWS, BETWEEN, UNBOUNDED, PRECEDING, AND, CURRENT, ROW,
 			), AS, sb.I("running_total"),
 			FROM, Orders,
-		},
+		),
 		"SELECT"+
 			" users.name,"+
 			" SUM(orders.total) OVER"+
@@ -332,7 +336,7 @@ func TestWindow(t *testing.T) {
 // an alias placed in sequence.
 func TestLateral(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			SELECT, UsersName, sb.I("t.total"),
 			FROM, Users,
 			JOIN, LATERAL,
@@ -344,7 +348,7 @@ func TestLateral(t *testing.T) {
 				LIMIT, sb.V(3),
 			),
 			AS, sb.I("t"), ON, TRUE,
-		},
+		),
 		"SELECT users.name, t.total"+
 			" FROM users"+
 			" JOIN LATERAL"+
@@ -360,7 +364,7 @@ func TestLateral(t *testing.T) {
 
 func TestRecursiveCTE(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			WITH, RECURSIVE, sb.I("tree"), AS,
 			sb.P(
 				SELECT, UsersID, UsersParentID,
@@ -375,7 +379,7 @@ func TestRecursiveCTE(t *testing.T) {
 			),
 			SELECT, STAR,
 			FROM, sb.I("tree"),
-		},
+		),
 		"WITH RECURSIVE tree AS"+
 			" (SELECT users.id, users.parent_id"+
 			" FROM users"+
@@ -406,11 +410,11 @@ func TestNested(t *testing.T) {
 		WHERE, UsersID, IN, sb.P(inner...), AND, UsersAge, GT, sb.V(18),
 	)
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			SELECT, sb.F("COUNT", STAR),
 			FROM, middle, AS, sb.I("x"),
 			WHERE, sb.I("x.id"), LT, sb.V(1000),
-		},
+		),
 		"SELECT COUNT(*)"+
 			" FROM (SELECT users.id"+
 			" FROM users"+
@@ -429,14 +433,14 @@ func TestNested(t *testing.T) {
 func TestInExistsNot(t *testing.T) {
 	sub := []sb.Token{SELECT, sb.V(1), FROM, Orders, WHERE, OrdersUserID, EQ, UsersID}
 	assertSQL(t,
-		[]sb.Token{
+		stmt(
 			SELECT, UsersID,
 			FROM, Users,
 			WHERE,
 			UsersStatus, IN, sb.P(sb.V("active"), sb.V("trial")), AND,
 			NOT, EXISTS, sb.P(sub...), AND,
 			UsersID, EQ, ANY, sb.P(SELECT, OrdersUserID, FROM, Orders),
-		},
+		),
 		"SELECT users.id"+
 			" FROM users"+
 			" WHERE"+
@@ -512,7 +516,7 @@ func TestDynamic(t *testing.T) {
 // than emitted.
 func TestNilIsAbsent(t *testing.T) {
 	assertSQL(t,
-		[]sb.Token{SELECT, UsersID, nil, FROM, Users, nil},
+		stmt(SELECT, UsersID, nil, FROM, Users, nil),
 		"SELECT users.id FROM users",
 	)
 }
@@ -525,7 +529,7 @@ func TestRawTooFewValues(t *testing.T) {
 	// Leaving the marker in place would produce "b = $0", which Postgres rejects
 	// with "there is no parameter $0", so this is an error.
 	assertErr(t,
-		[]sb.Token{SELECT, STAR, FROM, Users, WHERE, sb.RawExpr("a = $0 AND b = $0", 1)},
+		stmt(SELECT, STAR, FROM, Users, WHERE, sb.RawExpr("a = $0 AND b = $0", 1)),
 		"2 $0 marker(s) but 1 value(s)",
 	)
 }
@@ -535,7 +539,7 @@ func TestRawSurplusValues(t *testing.T) {
 	// refers to, and Postgres rejects the count mismatch, so this is an error
 	// too.
 	assertErr(t,
-		[]sb.Token{SELECT, STAR, FROM, Users, WHERE, sb.RawExpr("a = $0", 1, 2)},
+		stmt(SELECT, STAR, FROM, Users, WHERE, sb.RawExpr("a = $0", 1, 2)),
 		"1 $0 marker(s) but 2 value(s)",
 	)
 }
@@ -546,7 +550,7 @@ func TestRawDollarWithoutDigits(t *testing.T) {
 	// two items of the SELECT list: the parser does not look inside either one,
 	// so it takes each as one complete expression.
 	assertSQL(t,
-		[]sb.Token{SELECT, sb.RawExpr("$$it is here$$"), sb.RawExpr("$tag$so is this$tag$"), FROM, Users},
+		stmt(SELECT, sb.RawExpr("$$it is here$$"), sb.RawExpr("$tag$so is this$tag$"), FROM, Users),
 		"SELECT $$it is here$$, $tag$so is this$tag$ FROM users",
 	)
 }
@@ -566,7 +570,7 @@ func TestRawErrorsOnOtherPlaceholders(t *testing.T) {
 		"$$SELECT $1$$",
 	} {
 		t.Run(fragment, func(t *testing.T) {
-			assertErr(t, []sb.Token{SELECT, STAR, FROM, Users, WHERE, sb.RawExpr(fragment)}, "only $0 marks a value")
+			assertErr(t, stmt(SELECT, STAR, FROM, Users, WHERE, sb.RawExpr(fragment)), "only $0 marks a value")
 		})
 	}
 }
