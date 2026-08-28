@@ -19,21 +19,21 @@ import (
     "github.com/fujidaiti/psqlb/sb"
 )
 
-sb.S(SELECT, UsersID, FROM, Users, WHERE, UsersAge, GTE, sb.Lit(18))
+sb.ToSQL(SELECT, UsersID, FROM, Users, WHERE, UsersAge, GTE, sb.V(18))
 ```
 
 - `./keywords.go` — `package psqlb`: the SQL keyword constants, re-exported from
   `internal/kw`, plus the six named operator constants (`EQ`, `NE`, `GT`, `GTE`, `LT`,
   `LTE`). Nothing else. This is the package that is dot-imported.
 - `./sb/sb.go` — `package sb`: the design document (its package doc comment), the token
-  constructors and the entry point. `Token`, `Id`, `Lit`, `Raw`, `Op`, `Group`, `S`,
-  `Func`, `ToSQL`.
+  constructors and the entry point. `Token`, `I`, `V`, `RawExpr`, `RawOp`, `Group`, `P`,
+  `F`, `ToSQL`.
 - `./sb/parse.go` — the cursor, the statement dispatcher, `WITH`, and the SELECT
   productions.
 - `./sb/write.go` — the INSERT, UPDATE and DELETE productions.
 - `./sb/window.go` — `FILTER`, `OVER`, the `WINDOW` clause and frame clauses.
 - `./sb/expr.go` — the expression productions.
-- `./sb/emit.go` — the output builder, `$N` binding and `Raw` marker substitution.
+- `./sb/emit.go` — the output builder, `$N` binding and `RawExpr` marker substitution.
 - `./sb/errors.go` — the three error types.
 - `./internal/kw/kw.go` — `package kw`: `Token`, `Keyword`, `Operator` and every keyword
   constant. Internal, so a user cannot declare a keyword.
@@ -104,14 +104,14 @@ nothing more, which is what keeps it small.
 ### Tokens
 
 `sb.Token` is `kw.Token`, a marker interface with one exported method. The concrete types
-are `kw.Keyword`, `kw.Operator`, `sb.Id`, `sb.Lit`'s `value`, `sb.Raw`'s `rawFrag` and
-`sb.Group` (which `sb.S` and `sb.Func` both build). The parser switches on them; anything
+are `kw.Keyword`, `kw.Operator`, `sb.I`, `sb.V`'s `value`, `sb.RawExpr`'s `rawFrag` and
+`sb.Group` (which `sb.P` and `sb.F` both build). The parser switches on them; anything
 else is an error.
 
 Every position in the DSL takes a `Token`, never `any`. A plain Go value is not a token; it
-enters only through `Lit`, or the `$0` markers of `Raw`. This is deliberate:
-`sb.S(SELECT, "id")` would otherwise compile and produce a query Postgres accepts and runs
-while returning the wrong rows.
+enters only through `V`, or the `$0` markers of `RawExpr`. This is deliberate:
+`sb.ToSQL(SELECT, "id")` would otherwise compile and produce a query Postgres accepts and
+runs while returning the wrong rows.
 
 Every keyword is **one word**. Phrases are written as the words they are made of: `GROUP,
 BY`, `IS, NOT, NULL`, `LEFT, OUTER, JOIN`. The parser reads sequences natively, so a phrase
@@ -119,8 +119,8 @@ needs no constant of its own and optional words combine instead of multiplying. 
 constants live in `internal/kw` and are re-exported by `psqlb`, so the spelling a user
 writes and the value the parser compares against are the same thing.
 
-`sb.Raw` is **one opaque expression**. The parser checks where it may appear and never looks
-inside the string.
+`sb.RawExpr` is **one opaque expression**. The parser checks where it may appear and never
+looks inside the string.
 
 ### Errors
 
@@ -131,8 +131,8 @@ subquery in `FROM`), and `UnsupportedError` (legal PostgreSQL, outside the model
 subset). Coverage grows in phases; incompleteness is reported honestly rather than worked
 around.
 
-Two `Raw` errors are kept from the previous design: a `$0` marker count that does not match
-the value count, and a fragment containing `$N` for N other than 0.
+Two `RawExpr` errors are kept from the previous design: a `$0` marker count that does not
+match the value count, and a fragment containing `$N` for N other than 0.
 
 `nil` tokens mean "this token is absent" and are dropped before parsing.
 
@@ -141,12 +141,13 @@ the value count, and a fragment containing `$N` for N other than 0.
 Three rules govern the design, all stated at the top of the package doc of `sb`: the DSL
 should look like the raw SQL it produces, no special rule or keyword may be introduced that
 SQL does not have, and parentheses are explicit — if the SQL string needs them, the DSL
-must spell them with `S`, the one group there is. Read that section before changing
-anything.
+must spell them with `P`, the one group there is. `P` is always parenthesised; the
+statement is written with `sb.ToSQL(...)`, which is the one form that is not. Read that
+section before changing anything.
 
-Every keyword is now a constant; no keyword carries its own parentheses. `sb.Func` is the
+Every keyword is now a constant; no keyword carries its own parentheses. `sb.F` is the
 one constructor that does, and it is a constructor rather than a keyword, so it sits with
-`sb.Id` and `sb.Lit`.
+`sb.I` and `sb.V`.
 
 Two restrictions remain and are documented as such: an alias must be written with `AS`
 (which cannot be checked, and no check should be attempted — see the doc comment), and
@@ -164,7 +165,7 @@ Every example in `sql_test.go` passes and none is skipped.
 The `# Scope` section of the `sb` package doc lists what is still not modelled — type names
 with modifiers, `CAST(x AS type)`, frame exclusion, `ORDER BY ... USING`, `ON CONFLICT ON
 CONSTRAINT`, locking clauses, DDL, `MERGE`. There is no escape hatch for an unmodelled
-clause by design: the answer is to add the production. `sb.Raw` covers an unmodelled
+clause by design: the answer is to add the production. `sb.RawExpr` covers an unmodelled
 expression.
 
 ## Conventions

@@ -56,7 +56,7 @@ func (p *parser) insertStmt() error {
 }
 
 // valuesRows parses the rows of a VALUES clause. Each row is parenthesised in
-// SQL, so each is written with S and the comma between them comes from here.
+// SQL, so each is written with P and the comma between them comes from here.
 //
 //	( expression [, ...] ) [, ...]
 func (p *parser) valuesRows() error {
@@ -64,7 +64,7 @@ func (p *parser) valuesRows() error {
 		if i > 0 {
 			p.e.comma()
 		}
-		g, err := p.group("VALUES", "a parenthesised row after VALUES", "VALUES, sb.S(...)")
+		g, err := p.group("VALUES", "a parenthesised row after VALUES", "VALUES, sb.P(...)")
 		if err != nil {
 			return err
 		}
@@ -176,9 +176,9 @@ func (p *parser) deleteStmt() error {
 //
 //	table_name [ AS alias ]
 func (p *parser) table(prod string) error {
-	name, ok := p.peek().(Id)
+	name, ok := p.peek().(I)
 	if !ok {
-		return p.unexpected(prod, "a table name written with sb.Id")
+		return p.unexpected(prod, "a table name written with sb.I")
 	}
 	p.pos++
 	p.e.word(string(name))
@@ -195,7 +195,7 @@ func (p *parser) table(prod string) error {
 // The table qualifier is stripped from the name on the left of the "=", since
 // "SET users.status = ..." is not legal. This is the one deliberate exception
 // of its kind left in the package: SQL has no such rule, and the DSL text
-// differs from the SQL text. It is kept because writing sb.Id("status") for
+// differs from the SQL text. It is kept because writing sb.I("status") for
 // every assignment is the common case and the qualified column constant is the
 // one already at hand. It applies at this grammar position and nowhere else, so
 // the expression on the right of the "=" keeps its qualifiers, and so does the
@@ -219,19 +219,19 @@ func (p *parser) setList() error {
 
 func (p *parser) assignment() error {
 	switch t := p.peek().(type) {
-	case Id:
+	case I:
 		p.pos++
 		p.e.word(unqualify(t))
 	case Group:
 		if t.name != "" {
-			return p.unexpected("SET", "a column name written with sb.Id")
+			return p.unexpected("SET", "a column name written with sb.I")
 		}
 		p.pos++
 		if err := p.parens(t, (*parser).columnList); err != nil {
 			return err
 		}
 	default:
-		return p.unexpected("SET", "a column name written with sb.Id")
+		return p.unexpected("SET", "a column name written with sb.I")
 	}
 
 	op, ok := p.peek().(kw.Operator)
@@ -255,17 +255,17 @@ func (p *parser) columnList() error {
 // stripping in SET is a convenience rather than a rule this package wants to
 // spread.
 func (p *parser) nameList() error {
-	return p.names("column list", func(i Id) string { return string(i) })
+	return p.names("column list", func(i I) string { return string(i) })
 }
 
-func (p *parser) names(prod string, text func(Id) string) error {
+func (p *parser) names(prod string, text func(I) string) error {
 	for i := 0; ; i++ {
 		if i > 0 {
 			p.e.comma()
 		}
-		name, ok := p.peek().(Id)
+		name, ok := p.peek().(I)
 		if !ok {
-			return p.unexpected(prod, "a column name written with sb.Id")
+			return p.unexpected(prod, "a column name written with sb.I")
 		}
 		p.pos++
 		p.e.word(text(name))

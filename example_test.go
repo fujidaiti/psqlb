@@ -13,22 +13,20 @@ import (
 )
 
 const (
-	users        = sb.Id("users")
-	usersID      = sb.Id("users.id")
-	usersName    = sb.Id("users.name")
-	usersCreated = sb.Id("users.created_at")
+	users        = sb.I("users")
+	usersID      = sb.I("users.id")
+	usersName    = sb.I("users.name")
+	usersCreated = sb.I("users.created_at")
 )
 
 func Example() {
-	stm := sb.S(
+	sql, args, err := sb.ToSQL(
 		SELECT, usersID, usersName,
 		FROM, users,
-		WHERE, sb.S(usersCreated, usersID), LT, sb.S(sb.Lit("2025-06-01"), sb.Lit(500)),
+		WHERE, sb.P(usersCreated, usersID), LT, sb.P(sb.V("2025-06-01"), sb.V(500)),
 		ORDER, BY, usersCreated, DESC, usersID, DESC, NULLS, LAST,
-		LIMIT, sb.Lit(20),
+		LIMIT, sb.V(20),
 	)
-
-	sql, args, err := stm.ToSQL()
 	if err != nil {
 		panic(err)
 	}

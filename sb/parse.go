@@ -82,7 +82,7 @@ func describe(t Token) string {
 		return "keyword " + string(v)
 	case kw.Operator:
 		return fmt.Sprintf("operator %q", string(v))
-	case Id:
+	case I:
 		return fmt.Sprintf("identifier %q", string(v))
 	case value:
 		return "a value"
@@ -105,7 +105,7 @@ func describe(t Token) string {
 // ends the list, with no list of clause keywords to keep in step.
 func (p *parser) startsExpr() bool {
 	switch t := p.peek().(type) {
-	case Id, value, rawFrag, Group:
+	case I, value, rawFrag, Group:
 		return true
 	case kw.Keyword:
 		switch t {
@@ -137,7 +137,7 @@ func (p *parser) parens(g Group, f func(*parser) error) error {
 }
 
 // group consumes the next token as a plain group, or reports that the position
-// requires one. SQL parenthesises here, so the DSL demands an S here.
+// requires one. SQL parenthesises here, so the DSL demands a P here.
 func (p *parser) group(prod, want, fix string) (Group, error) {
 	g, ok := p.peek().(Group)
 	if !ok || g.name != "" {
@@ -189,7 +189,7 @@ func (p *parser) statement() error {
 //
 //	WITH [ RECURSIVE ] with_query [, ...] statement
 //
-// The CTE bodies are parenthesised in SQL, so each is written with S like every
+// The CTE bodies are parenthesised in SQL, so each is written with P like every
 // other group, and the statement they are for follows them as plain tokens.
 func (p *parser) withStmt() error {
 	p.take(kw.WITH)
@@ -201,7 +201,7 @@ func (p *parser) withStmt() error {
 		if err := p.withQuery(); err != nil {
 			return err
 		}
-		if _, ok := p.peek().(Id); !ok {
+		if _, ok := p.peek().(I); !ok {
 			break
 		}
 	}
@@ -215,9 +215,9 @@ func (p *parser) withStmt() error {
 //
 //	name [ ( column_name [, ...] ) ] AS [ [ NOT ] MATERIALIZED ] ( query )
 func (p *parser) withQuery() error {
-	name, ok := p.peek().(Id)
+	name, ok := p.peek().(I)
 	if !ok {
-		return p.unexpected("WITH", "a query name written with sb.Id")
+		return p.unexpected("WITH", "a query name written with sb.I")
 	}
 	p.pos++
 	p.e.word(string(name))
@@ -239,7 +239,7 @@ func (p *parser) withQuery() error {
 		p.take(kw.MATERIALIZED)
 	}
 
-	g, err := p.group("WITH", "a parenthesised query as the body", "AS, sb.S(SELECT, ...)")
+	g, err := p.group("WITH", "a parenthesised query as the body", "AS, sb.P(SELECT, ...)")
 	if err != nil {
 		return err
 	}
@@ -299,7 +299,7 @@ func (p *parser) selectStmt() error {
 	p.take(kw.SELECT)
 
 	if !p.take(kw.ALL) && p.take(kw.DISTINCT) && p.take(kw.ON) {
-		g, err := p.group("DISTINCT ON", "a parenthesised list of expressions", "DISTINCT, ON, sb.S(...)")
+		g, err := p.group("DISTINCT ON", "a parenthesised list of expressions", "DISTINCT, ON, sb.P(...)")
 		if err != nil {
 			return err
 		}
@@ -407,9 +407,9 @@ func (p *parser) returning() error {
 }
 
 func (p *parser) alias(prod string) error {
-	id, ok := p.peek().(Id)
+	id, ok := p.peek().(I)
 	if !ok {
-		return p.unexpected(prod, "an alias written with sb.Id")
+		return p.unexpected(prod, "an alias written with sb.I")
 	}
 	p.pos++
 	p.e.word(string(id))
@@ -438,7 +438,7 @@ func (p *parser) fromList() error {
 // function call, and nothing else.
 func (p *parser) startsFromItem() bool {
 	switch p.peek().(type) {
-	case Id, Group:
+	case I, Group:
 		return true
 	}
 	return p.at(kw.LATERAL)
@@ -449,7 +449,7 @@ func (p *parser) startsFromItem() bool {
 //	from_item [ NATURAL ] join_type from_item { ON condition | USING ( column [, ...] ) }
 //
 // Joins associate to the left and chain, so this is a loop rather than
-// recursion. Parentheses around a join are written with S like any others.
+// recursion. Parentheses around a join are written with P like any others.
 func (p *parser) joinedTable() error {
 	if err := p.fromItem(); err != nil {
 		return err
@@ -503,7 +503,7 @@ func (p *parser) joinClause() (bool, error) {
 			return false, err
 		}
 	case p.take(kw.USING):
-		g, err := p.group("JOIN USING", "a parenthesised list of column names", "USING, sb.S(...)")
+		g, err := p.group("JOIN USING", "a parenthesised list of column names", "USING, sb.P(...)")
 		if err != nil {
 			return false, err
 		}
@@ -514,7 +514,7 @@ func (p *parser) joinClause() (bool, error) {
 		return false, &MissingError{
 			Production: "JOIN",
 			Want:       "a join condition",
-			Fix:        "ON, <condition> or USING, sb.S(...)",
+			Fix:        "ON, <condition> or USING, sb.P(...)",
 		}
 	}
 	return true, nil
@@ -537,7 +537,7 @@ func (p *parser) fromItem() error {
 
 	subquery := false
 	switch t := p.peek().(type) {
-	case Id:
+	case I:
 		p.pos++
 		p.e.word(string(t))
 	case Group:
@@ -568,7 +568,7 @@ func (p *parser) fromItem() error {
 		return &MissingError{
 			Production: "FROM",
 			Want:       "an alias on a subquery",
-			Fix:        `sb.S(...), AS, sb.Id("t")`,
+			Fix:        `sb.P(...), AS, sb.I("t")`,
 		}
 	}
 	return nil

@@ -5,6 +5,22 @@ the parser is in, and every worked example passes. The document describes the
 architecture only — no implementation details, no code to copy. What is still not
 modelled is listed in the `# Scope` section of the `sb` package doc.
 
+The constructors were renamed after this document was written, so the spellings below are
+the ones that landed at the time, not the current ones. The mapping is:
+
+| Here | Now |
+|---|---|
+| `sb.S` | `sb.P` |
+| `sb.Lit` | `sb.V` |
+| `sb.Id` | `sb.I` |
+| `sb.Func` | `sb.F` |
+| `sb.Raw` | `sb.RawExpr` |
+| `sb.Op` | `sb.RawOp` |
+
+`ToSQL` also moved from a method on `sb.Group` to `sb.ToSQL(items ...Token)`, so a
+statement is written with `sb.ToSQL(...)` and `sb.P` is only ever parentheses. Everything
+this document says about the architecture is unaffected by both changes.
+
 ## Context
 
 `psqlb` today takes a flat token list and renders it with one function, `walk`. Every

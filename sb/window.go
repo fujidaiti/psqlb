@@ -14,7 +14,7 @@ import "github.com/fujidaiti/psqlb/internal/kw"
 //	aggregate_call FILTER ( WHERE condition )
 func (p *parser) filter(prod string) error {
 	p.take(kw.FILTER)
-	g, err := p.group(prod, "a parenthesised WHERE clause after FILTER", "FILTER, sb.S(WHERE, ...)")
+	g, err := p.group(prod, "a parenthesised WHERE clause after FILTER", "FILTER, sb.P(WHERE, ...)")
 	if err != nil {
 		return err
 	}
@@ -33,7 +33,7 @@ func (p *parser) filter(prod string) error {
 func (p *parser) over(prod string) error {
 	p.take(kw.OVER)
 	switch t := p.peek().(type) {
-	case Id:
+	case I:
 		p.pos++
 		p.e.word(string(t))
 		return nil
@@ -54,23 +54,23 @@ func (p *parser) windowList() error {
 		if i > 0 {
 			p.e.comma()
 		}
-		name, ok := p.peek().(Id)
+		name, ok := p.peek().(I)
 		if !ok {
-			return p.unexpected("WINDOW", "a window name written with sb.Id")
+			return p.unexpected("WINDOW", "a window name written with sb.I")
 		}
 		p.pos++
 		p.e.word(string(name))
 		if err := p.want("WINDOW", kw.AS); err != nil {
 			return err
 		}
-		g, err := p.group("WINDOW", "a parenthesised window definition", "AS, sb.S(...)")
+		g, err := p.group("WINDOW", "a parenthesised window definition", "AS, sb.P(...)")
 		if err != nil {
 			return err
 		}
 		if err := p.parens(g, (*parser).windowDef); err != nil {
 			return err
 		}
-		if _, ok := p.peek().(Id); !ok {
+		if _, ok := p.peek().(I); !ok {
 			return nil
 		}
 	}
@@ -85,7 +85,7 @@ func (p *parser) windowList() error {
 //
 // Every part is optional, so an empty group is a valid window definition.
 func (p *parser) windowDef() error {
-	if name, ok := p.peek().(Id); ok {
+	if name, ok := p.peek().(I); ok {
 		p.pos++
 		p.e.word(string(name))
 	}

@@ -2,12 +2,12 @@
 //
 // A statement is written as one sequence of tokens, in the order the SQL reads:
 //
-//	sb.S(
+//	sb.ToSQL(
 //		SELECT, UsersID, UsersName,
 //		FROM, Users,
-//		WHERE, sb.S(UsersCreated, UsersID), LT, sb.S(sb.Lit("2025-06-01"), sb.Lit(500)),
+//		WHERE, sb.P(UsersCreated, UsersID), LT, sb.P(sb.V("2025-06-01"), sb.V(500)),
 //		ORDER, BY, UsersCreated, DESC, UsersID, DESC, NULLS, LAST,
-//		LIMIT, sb.Lit(20),
+//		LIMIT, sb.V(20),
 //	)
 //
 //	// SELECT users.id, users.name
@@ -34,9 +34,10 @@
 //	)
 //
 // That is the whole reason for the split. Dot-importing one package that held
-// both would also put S, Func, Id, Lit and Raw into the user's file scope, where
-// they collide with ordinary Go names and no longer look different from the SQL
-// vocabulary.
+// both would also put P, F, I, V, RawExpr and RawOp into the user's file scope,
+// where they collide with ordinary Go names and no longer look different from
+// the SQL vocabulary. The prefix is what lets them be this short: sb.V(18) is
+// unambiguous where a bare V(18) would not be.
 //
 // The keyword type is in internal/kw, which neither package re-exports, so a
 // user cannot declare a keyword of their own. That matters more here than it
@@ -58,7 +59,7 @@
 //     behaves differently from the one it is named after.
 //
 //  3. Parentheses are explicit. If parentheses are wanted in the SQL string,
-//     something must be written for them in the DSL: S, which is the only group
+//     something must be written for them in the DSL: P, which is the only group
 //     there is. Parentheses are never added or removed on the reader's behalf.
 //
 // # The central idea
@@ -77,7 +78,7 @@
 // next key. No token has to be marked as attaching to the one before it.
 //
 // The same token may mean different things in different places. ON introduces a
-// join condition inside FROM and names a conflict target after INSERT; Id is a
+// join condition inside FROM and names a conflict target after INSERT; I is a
 // table in FROM and a column reference in a WHERE; a group is a subquery after
 // FROM, an expression list after IN and a row constructor in an expression. No
 // token needs a second spelling for a second role.
@@ -91,15 +92,19 @@
 // A token is data the parser inspects, not something that renders itself. The
 // set is closed:
 //
-//	Token                        | Written as              | Example
-//	-----------------------------|-------------------------|--------------------------
-//	Keyword                      | a constant from psqlb   | SELECT FROM WHERE IN OVER
-//	Operator                     | a constant, or sb.Op()  | EQ LIKE, sb.Op("@>")
-//	Identifier                   | sb.Id                   | UsersID
-//	Value                        | sb.Lit()                | sb.Lit(42)
-//	Group, and the statement     | sb.S(...)               | sb.S(x, y) -> (x, y)
-//	Function call                | sb.Func(name, ...)      | sb.Func("COUNT", STAR)
-//	Hand-written expression      | sb.Raw()                | sb.Raw("x = $0", 1)
+//	Token                    | Written as                | Example
+//	-------------------------|---------------------------|---------------------------
+//	Keyword                  | a constant from psqlb     | SELECT FROM WHERE IN OVER
+//	Operator                 | a constant, or sb.RawOp() | EQ LIKE, sb.RawOp("@>")
+//	Identifier               | sb.I                      | UsersID
+//	Value                    | sb.V()                    | sb.V(42)
+//	Group                    | sb.P(...)                 | sb.P(x, y) -> (x, y)
+//	Function call            | sb.F(name, ...)           | sb.F("COUNT", STAR)
+//	Hand-written expression  | sb.RawExpr()              | sb.RawExpr("x = $0", 1)
+//
+// The statement itself is not a token: it is written as the arguments of
+// sb.ToSQL, which is the outermost form and the only one that is not
+// parenthesised.
 //
 // Every keyword is one word. A phrase is written as the words it is made of:
 // GROUP, BY and IS, NOT, NULL and LEFT, OUTER, JOIN. The parser reads sequences
@@ -129,42 +134,42 @@
 //
 // # Parentheses
 //
-// S is the only group and the only source of parentheses. It is bare at the
-// outermost level, where it is the statement, and parenthesised whenever it is
-// nested, so nesting in Go is nesting in SQL. What it holds is decided by the
-// position it is written in:
+// P is the only group and the only source of parentheses. It always writes a
+// pair, so nesting in Go is nesting in SQL, and the statement is written with
+// ToSQL rather than with P because a statement is not parenthesised. What a
+// group holds is decided by the position it is written in:
 //
-//	FROM, sb.S(SELECT, ...), AS, sb.Id("x")      // a subquery, aliased
-//	IN, sb.S(sb.Lit("active"), sb.Lit("trial"))  // an expression list
-//	IN, sb.S(SELECT, OrdersUserID, FROM, Orders) // a subquery
-//	WHERE, sb.S(a, OR, b)                        // a parenthesised condition
-//	WHERE, sb.S(a, b), EQ, sb.S(x, y)            // two row constructors
+//	FROM, sb.P(SELECT, ...), AS, sb.I("x")       // a subquery, aliased
+//	IN, sb.P(sb.V("active"), sb.V("trial"))      // an expression list
+//	IN, sb.P(SELECT, OrdersUserID, FROM, Orders) // a subquery
+//	WHERE, sb.P(a, OR, b)                        // a parenthesised condition
+//	WHERE, sb.P(a, b), EQ, sb.P(x, y)            // two row constructors
 //
 // A position that is parenthesised in SQL requires a group and reports its
 // absence, so a keyword that SQL always follows with one — IN, EXISTS, ANY —
 // is a constant like any other and needs no parentheses of its own.
 //
-// There is no way to nest an S without parentheses and no automatic removal of
+// There is no way to nest a P without parentheses and no automatic removal of
 // them. To reuse a fragment where parentheses are unwanted, keep it as a
 // []Token and spread it:
 //
 //	inner := []sb.Token{SELECT, OrdersUserID, FROM, Orders}
-//	sb.S(SELECT, STAR, FROM, Users, WHERE, UsersID, IN, sb.S(inner...))
+//	sb.ToSQL(SELECT, STAR, FROM, Users, WHERE, UsersID, IN, sb.P(inner...))
 //
 // One more level of nesting is one more pair of parentheses, and after IN it is
 // a different query. Both are legal SQL:
 //
-//	UsersID, IN, sb.S(SELECT, OrdersUserID, FROM, Orders) // membership
-//	UsersID, IN, sb.S(sb.S(inner...))                     // a one-element list
+//	UsersID, IN, sb.P(SELECT, OrdersUserID, FROM, Orders) // membership
+//	UsersID, IN, sb.P(sb.P(inner...))                     // a one-element list
 //
 // The second compares against a list of one scalar subquery, so it fails at
 // execution if the subquery returns more than one row.
 //
 // # Values and $N
 //
-// A plain Go value is not a token. It enters a statement only through Lit,
+// A plain Go value is not a token. It enters a statement only through V,
 // which binds it and produces its placeholder, or through the "$0" markers of
-// Raw. That is what keeps S(SELECT, "id") from compiling.
+// RawExpr. That is what keeps ToSQL(SELECT, "id") from compiling.
 //
 // Placeholders are numbered in emission order, which is token order, so a
 // nested statement numbers correctly at any depth with no counter and no
@@ -183,8 +188,8 @@
 //     modelled subset. It is a distinct type so that "I wrote this wrong" can be
 //     told from "this package has not got there yet".
 //
-// Two further errors belong to Raw and are reported at ToSQL: a fragment whose
-// "$0" marker count does not match its value count, and a fragment containing
+// Two further errors belong to RawExpr and are reported at ToSQL: a fragment
+// whose "$0" marker count does not match its value count, and one containing
 // "$N" for any N other than 0. The second would run, which is exactly the
 // problem: it silently reads another clause's value.
 //
@@ -232,19 +237,19 @@
 // An assignment is "column = expression" or
 // "(column [, ...]) = (expression [, ...])".
 //
-// Expressions: column references, Lit, Raw, Func, named and hand-written
+// Expressions: column references, V, RawExpr, F, named and hand-written
 // operators, AND, OR, NOT, IS [NOT] NULL/TRUE/FALSE/UNKNOWN, IS [NOT] DISTINCT
 // FROM, [NOT] IN, [NOT] BETWEEN, [NOT] LIKE/ILIKE, [NOT] SIMILAR TO, COLLATE,
 // EXISTS, a quantified comparison with ANY/SOME/ALL, CASE, "::" written
-// TYPECAST with the type name as an Id, row constructors, scalar subqueries and
+// TYPECAST with the type name as an I, row constructors, scalar subqueries and
 // parenthesised expressions. A function call may take ALL or DISTINCT, may
 // order its input with ORDER BY, and may carry FILTER and OVER, the latter
 // taking a window name or a definition with PARTITION BY, ORDER BY and a RANGE,
 // ROWS or GROUPS frame.
 //
 // Not modelled: a type name with a modifier or more than one word, which is
-// written with Raw; the CAST(x AS type) form, written "::"; frame exclusion;
-// ORDER BY ... USING; ON CONFLICT ON CONSTRAINT; FETCH and locking clauses;
+// written with RawExpr; the CAST(x AS type) form, written "::"; frame
+// exclusion; ORDER BY ... USING; ON CONFLICT ON CONSTRAINT; FETCH and locking clauses;
 // TABLESAMPLE; DDL; MERGE; and array and JSON path syntax. Each is a candidate
 // for later work, and none of them blocks the statements above.
 //
@@ -257,27 +262,27 @@
 //     the expression to the right of the "=" keeps its qualifiers and so does
 //     the column list of INSERT.
 //
-//   - An alias must be written with AS. SELECT, UsersID, sb.Id("x") emits
+//   - An alias must be written with AS. SELECT, UsersID, sb.I("x") emits
 //     "SELECT users.id, x", never "SELECT users.id AS x". SQL allows the
 //     implicit form and the DSL does not, because the two are the same token
 //     sequence: the DSL has no comma token, so both readings are valid SQL and
 //     a heuristic would reject the ordinary "SELECT users.id, name".
 //
 //   - The package is only as useful as its coverage. There is no escape hatch
-//     for an unmodelled clause: the answer is to model it. Raw covers an
+//     for an unmodelled clause: the answer is to model it. RawExpr covers an
 //     unmodelled expression, which is where the open-ended part of SQL sits.
 //
-//   - Raw is one opaque expression. The parser checks where it may appear and
-//     never looks inside it, so a fragment that contains a comma or a whole
-//     clause can still break a statement.
+//   - RawExpr is one opaque expression. The parser checks where it may appear
+//     and never looks inside it, so a fragment that contains a comma or a
+//     whole clause can still break a statement.
 //
 //   - No type safety and no semantic checking. Whether a column exists and
 //     whether two types unify are the database's business.
 //
-//   - Raw performs no escaping at all. Pass only constants, or strings
+//   - RawExpr performs no escaping at all. Pass only constants, or strings
 //     assembled in code.
 //
-//   - Aliasing a table needs its own Id constant. There is no Users.As("u").
+//   - Aliasing a table needs its own I constant. There is no Users.As("u").
 //
 //   - Nothing here has been run against a real database. The tests check the
 //     generated string and the bound args, nothing more.
@@ -300,30 +305,31 @@ import (
 // what it renders depends on where it is written.
 //
 // Every position in the DSL takes a Token, never an any. A plain Go value is
-// not a token: it enters a statement only through Lit, or through the "$0"
-// markers of Raw. That is what keeps S(SELECT, "id") from compiling.
+// not a token: it enters a statement only through V, or through the "$0"
+// markers of RawExpr. That is what keeps ToSQL(SELECT, "id") from compiling.
 type Token = kw.Token
 
-// Id is an identifier: a table name, a column name, an alias, or a simple type
+// I is an identifier: a table name, a column name, an alias, or a simple type
 // name. Its underlying type is string so that it can be declared with const.
 // The text is emitted verbatim; nothing is quoted and nothing is validated.
-type Id string
+type I string
 
-func (Id) SQLToken() {}
+func (I) SQLToken() {}
 
-// value is what Lit produces.
+// value is what V produces.
 type value struct{ v any }
 
 func (value) SQLToken() {}
 
-// Lit binds a value and produces its placeholder.
+// V binds a value and produces its placeholder.
 //
-//	S(SELECT, STAR, FROM, Users, WHERE, UsersAge, GTE, Lit(18)) // ... WHERE users.age >= $1
-func Lit(v any) Token { return value{v} }
+//	ToSQL(SELECT, STAR, FROM, Users, WHERE, UsersAge, GTE, V(18))
+//	// SELECT * FROM users WHERE users.age >= $1
+func V(v any) Token { return value{v} }
 
-// rawFrag is what Raw produces. The fragment is split at its "$0" markers when
-// it is written, so a malformed fragment is caught at the call rather than at
-// build time; err carries that failure until ToSQL is reached.
+// rawFrag is what RawExpr produces. The fragment is split at its "$0" markers
+// when it is written, so a malformed fragment is caught at the call rather than
+// at build time; err carries that failure until ToSQL is reached.
 type rawFrag struct {
 	parts []string
 	vals  []any
@@ -332,7 +338,7 @@ type rawFrag struct {
 
 func (rawFrag) SQLToken() {}
 
-// Raw is an expression written by hand: the escape hatch for an expression
+// RawExpr is an expression written by hand: the escape hatch for an expression
 // this package does not model. It is one complete expression wherever an
 // expression may begin, and the parser never looks inside the string.
 //
@@ -340,7 +346,7 @@ func (rawFrag) SQLToken() {}
 // values stay where they are written instead of being split into separate
 // tokens.
 //
-//	Raw("users.meta->'profile'->>'city' = $0", "Tokyo")
+//	RawExpr("users.meta->'profile'->>'city' = $0", "Tokyo")
 //	// users.meta->'profile'->>'city' = $2   (if the fragment came second)
 //
 // A fragment cannot know that number in advance, which is why it does not write
@@ -348,74 +354,82 @@ func (rawFrag) SQLToken() {}
 // otherwise produce a query that runs and quietly reads another clause's value.
 // A marker count that does not match the value count is an error too.
 //
-// Raw does not look inside quoted regions, because a fragment is a piece of a
-// statement and may begin or end inside one. The consequence is that a "$"
+// RawExpr does not look inside quoted regions, because a fragment is a piece of
+// a statement and may begin or end inside one. The consequence is that a "$"
 // followed by digits cannot appear as literal text. Dollar quoting itself still
 // works, since only a digit after the "$" makes a marker, so "$$body$$" and
 // "$tag$body$tag$" pass through untouched.
 //
 // No escaping is performed at all. Pass only constants, or strings assembled in
 // code.
-func Raw(sql string, vals ...any) Token {
+func RawExpr(sql string, vals ...any) Token {
 	parts, err := splitMarkers(sql)
 	cp := dup(vals)
 	if err == nil && len(parts)-1 != len(cp) {
-		err = fmt.Errorf("psqlb: Raw: fragment has %d $0 marker(s) but %d value(s): %s",
+		err = fmt.Errorf("psqlb: RawExpr: fragment has %d $0 marker(s) but %d value(s): %s",
 			len(parts)-1, len(cp), sql)
 	}
 	return rawFrag{parts: parts, vals: cp, err: err}
 }
 
-// Op is an operator written by hand. It exists because operators are not a
+// RawOp is an operator written by hand. It exists because operators are not a
 // fixed list: extensions add their own. It is an infix operator wherever one
 // may appear, and the symbol is emitted verbatim.
 //
-//	S(..., WHERE, UsersMeta, Op("@>"), Lit(`{"vip":true}`)) // WHERE users.meta @> $1
-func Op(sql string) Token { return kw.Operator(sql) }
+//	..., WHERE, UsersMeta, RawOp("@>"), V(`{"vip":true}`) // users.meta @> $1
+func RawOp(sql string) Token { return kw.Operator(sql) }
 
 // ===========================================================================
 // Groups
 // ===========================================================================
 
-// Group is a parenthesised list of tokens, and at the outermost level the whole
-// statement. What a group means is decided by the position it is written in and
+// Group is a parenthesised list of tokens. What a group means is decided by the position it is written in and
 // not by the group itself: after FROM it is a subquery, after IN it is an
 // expression list or a subquery, in an expression it is a parenthesised
 // expression or a row constructor, and after VALUES it is one row.
 type Group struct {
-	// name is emitted immediately before the opening parenthesis: "" for S and
-	// the function name for Func.
+	// name is emitted immediately before the opening parenthesis: "" for P and
+	// the function name for F.
 	name  string
 	items []Token
 }
 
 func (Group) SQLToken() {}
 
-// S builds a group. It is the only way to write a statement and the only source
-// of parentheses in the generated SQL, so a subquery, a grouped condition, a
-// row constructor, an IN list and a window specification are all spelled the
-// same way.
+// P builds a group. It is the only source of parentheses in the generated SQL,
+// so a subquery, a grouped condition, a row constructor, an IN list and a
+// window specification are all spelled the same way. A statement is written
+// with ToSQL instead, because it is the one thing that is not parenthesised.
 //
-//	S(SELECT, UsersID, FROM, Users)          // SELECT users.id FROM users
-//	S(UsersIsPaid, OR, UsersHasTicket)       // (users.paid OR users.has_ticket)
-//	S(Lit("active"), Lit("trial"))           // ($1, $2)
-func S(items ...Token) Group { return Group{items: dup(items)} }
+//	P(SELECT, UsersID, FROM, Users)    // (SELECT users.id FROM users)
+//	P(UsersIsPaid, OR, UsersHasTicket) // (users.paid OR users.has_ticket)
+//	P(V("active"), V("trial"))         // ($1, $2)
+func P(items ...Token) Group { return Group{items: dup(items)} }
 
-// Func is a function call. It covers any SQL function, which is what spares the
+// F is a function call. It covers any SQL function, which is what spares the
 // package from growing separate COUNT, SUM and COALESCE helpers.
 //
-//	Func("COUNT", STAR)              // COUNT(*)
-//	Func("COUNT", DISTINCT, UsersID) // COUNT(DISTINCT users.id)
-func Func(name string, items ...Token) Group {
+//	F("COUNT", STAR)              // COUNT(*)
+//	F("COUNT", DISTINCT, UsersID) // COUNT(DISTINCT users.id)
+func F(name string, items ...Token) Group {
 	return Group{name: name, items: dup(items)}
 }
 
-// ToSQL parses the group as a statement and returns the SQL text and the values
-// bound to its $N placeholders. The outermost level is never parenthesised;
-// every nested group is.
-func (g Group) ToSQL() (string, []any, error) {
+// ===========================================================================
+// The statement
+// ===========================================================================
+
+// ToSQL parses items as a complete statement and returns the SQL text and the
+// values bound to its $N placeholders.
+//
+// This is the outermost form, and the only one: a statement is not
+// parenthesised, so it is not written with P. Every group inside it is.
+//
+//	ToSQL(SELECT, UsersID, FROM, Users, WHERE, UsersAge, GTE, V(18))
+//	// SELECT users.id FROM users WHERE users.age >= $1, args=[18]
+func ToSQL(items ...Token) (string, []any, error) {
 	e := &emitter{}
-	p := &parser{toks: compact(g.items), e: e}
+	p := &parser{toks: compact(items), e: e}
 	if err := p.statement(); err != nil {
 		return "", nil, err
 	}
@@ -429,8 +443,8 @@ func (g Group) ToSQL() (string, []any, error) {
 // Helpers
 // ===========================================================================
 
-// dup is generic because Raw holds values, []any, while a group holds tokens,
-// []Token.
+// dup is generic because RawExpr holds values, []any, while a group holds
+// tokens, []Token.
 func dup[T any](vs []T) []T {
 	cp := make([]T, len(vs))
 	copy(cp, vs)
@@ -472,7 +486,7 @@ func splitMarkers(sql string) ([]string, error) {
 			continue
 		}
 		if rest[:n] != "0" {
-			return nil, fmt.Errorf("psqlb: Raw: fragment contains $%s, but only $0 marks a value: %s",
+			return nil, fmt.Errorf("psqlb: RawExpr: fragment contains $%s, but only $0 marks a value: %s",
 				rest[:n], sql)
 		}
 		parts = append(parts, buf.String())
@@ -484,7 +498,7 @@ func splitMarkers(sql string) ([]string, error) {
 
 // unqualify strips a table qualifier from a name. It is used at exactly one
 // grammar position, the target of a SET assignment.
-func unqualify(i Id) string {
+func unqualify(i I) string {
 	s := string(i)
 	if n := strings.LastIndex(s, "."); n >= 0 {
 		return s[n+1:]

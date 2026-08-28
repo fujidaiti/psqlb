@@ -108,9 +108,9 @@ func (p *parser) infix(prod string) (bool, error) {
 		case kw.COLLATE:
 			p.pos++
 			p.e.word("COLLATE")
-			name, ok := p.peek().(Id)
+			name, ok := p.peek().(I)
 			if !ok {
-				return true, p.unexpected(prod, "a collation name written with sb.Id")
+				return true, p.unexpected(prod, "a collation name written with sb.I")
 			}
 			p.pos++
 			p.e.word(string(name))
@@ -148,7 +148,7 @@ func (p *parser) quantified(prod string) error {
 	p.take(q)
 	g, err := p.group(prod,
 		"a parenthesised subquery or list after "+string(q),
-		string(q)+", sb.S(...)")
+		string(q)+", sb.P(...)")
 	if err != nil {
 		return err
 	}
@@ -180,10 +180,10 @@ func (p *parser) isPredicate(prod string) error {
 //	expression [ NOT ] IN ( subquery )
 //
 // The parentheses are always there in SQL, so a group is required here. This is
-// what makes IN, Lit(1), Lit(2) an error rather than the invalid IN $1, $2.
+// what makes IN, V(1), V(2) an error rather than the invalid IN $1, $2.
 func (p *parser) inPredicate(prod string) error {
 	p.take(kw.IN)
-	g, err := p.group(prod, "a parenthesised list or subquery after IN", "IN, sb.S(...)")
+	g, err := p.group(prod, "a parenthesised list or subquery after IN", "IN, sb.P(...)")
 	if err != nil {
 		return err
 	}
@@ -210,7 +210,7 @@ func (p *parser) betweenPredicate(prod string) error {
 // operand parses one complete operand, including any prefix it carries.
 func (p *parser) operand(prod string) error {
 	switch t := p.peek().(type) {
-	case Id:
+	case I:
 		p.pos++
 		p.e.word(string(t))
 		return nil
@@ -254,7 +254,7 @@ func (p *parser) operand(prod string) error {
 			p.pos++
 			p.e.word("EXISTS")
 			g, err := p.group(prod,
-				"a parenthesised subquery after EXISTS", "EXISTS, sb.S(SELECT, ...)")
+				"a parenthesised subquery after EXISTS", "EXISTS, sb.P(SELECT, ...)")
 			if err != nil {
 				return err
 			}
@@ -286,7 +286,7 @@ func (p *parser) parenExpr(g Group) error {
 //
 //	function_name ( [ ALL | DISTINCT ] expression [, ...] [ ORDER BY sort_key [, ...] ] )
 //
-// The parentheses come from Func, which is a constructor rather than a keyword:
+// The parentheses come from F, which is a constructor rather than a keyword:
 // a function call is written with parentheses in SQL too.
 func (p *parser) call(g Group) error {
 	sub := &parser{toks: compact(g.items), e: p.e}
@@ -355,11 +355,11 @@ func (p *parser) caseExpr() error {
 }
 
 // typeName parses the right-hand side of a typecast. A simple name is written
-// with Id, which covers jsonb, int and text; anything with a modifier or more
-// than one word is written with Raw for now.
+// with I, which covers jsonb, int and text; anything with a modifier or more
+// than one word is written with RawExpr for now.
 func (p *parser) typeName(prod string) error {
 	switch t := p.peek().(type) {
-	case Id:
+	case I:
 		p.pos++
 		p.e.word(string(t))
 		return nil
@@ -371,7 +371,7 @@ func (p *parser) typeName(prod string) error {
 		p.e.rawFragment(t.parts, t.vals)
 		return nil
 	}
-	return p.unexpected(prod, "a type name written with sb.Id or sb.Raw")
+	return p.unexpected(prod, "a type name written with sb.I or sb.RawExpr")
 }
 
 // similarTo implements
