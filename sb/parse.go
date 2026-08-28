@@ -28,6 +28,9 @@ func (p *parser) done() bool { return p.pos >= len(p.toks) }
 
 func (p *parser) peek() Token { return p.lookahead(0) }
 
+// lookahead returns nil past the end of the input, and that is the only thing
+// a nil means: every token slice came from normalize, which wraps a nil item
+// into a value to bind.
 func (p *parser) lookahead(n int) Token {
 	if p.pos+n >= len(p.toks) {
 		return nil
@@ -89,6 +92,8 @@ func describe(t Token) string {
 		return "a value"
 	case rawFrag:
 		return "a raw fragment"
+	case unspread:
+		return fmt.Sprintf("a slice of %d items passed without %q", v.n, "...")
 	case Group:
 		if v.name != "" {
 			return "a call of " + v.name
@@ -125,7 +130,7 @@ func (p *parser) startsExpr() bool {
 // is parenthesised, empty or not; the outermost level never is. This is the
 // only place a parenthesis is written.
 func (p *parser) parens(g Group, f func(*parser) error) error {
-	sub := &parser{toks: compact(g.items), e: p.e}
+	sub := &parser{toks: g.items, e: p.e}
 	p.e.open(g.name)
 	if err := f(sub); err != nil {
 		return err
@@ -152,11 +157,10 @@ func (p *parser) group(prod, want, fix string) (Group, error) {
 // expressions. It is the one place a group is looked into before being parsed,
 // and it looks only at the first token.
 func startsStatement(g Group) bool {
-	items := compact(g.items)
-	if len(items) == 0 {
+	if len(g.items) == 0 {
 		return false
 	}
-	k, ok := items[0].(tok.Keyword)
+	k, ok := g.items[0].(tok.Keyword)
 	if !ok {
 		return false
 	}

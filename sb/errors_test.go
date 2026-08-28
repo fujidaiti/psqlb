@@ -26,7 +26,7 @@ import (
 
 type ecase struct {
 	name string
-	stmt []sb.Token
+	stmt []any
 	want string // a substring of the message
 }
 
@@ -366,6 +366,19 @@ func TestWindowsAndCTEs(t *testing.T) {
 			name: "a CTE body that is not a group",
 			stmt: stmt(WITH, sb.I("t"), AS, SELECT, UsersID, FROM, Users),
 			want: "a parenthesised query as the body is required",
+		},
+		{
+			// A slice passed without "..." is an any like any other and
+			// compiles. It would bind the whole statement as one parameter, so
+			// normalization makes it a token no production accepts.
+			name: "a statement passed as one slice",
+			stmt: stmt([]any{SELECT, UsersID, FROM, Users}),
+			want: `a slice of 4 items passed without "..."`,
+		},
+		{
+			name: "a fragment passed to sb.P as one slice",
+			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, IN, sb.P([]any{sb.V(1), sb.V(2)})),
+			want: `a slice of 2 items passed without "..."`,
 		},
 		{
 			name: "WITH with no statement after it",

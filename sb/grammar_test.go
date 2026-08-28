@@ -1,6 +1,7 @@
 package sb_test
 
 import (
+	"strings"
 	"testing"
 
 	. "github.com/fujidaiti/psqlb/kw"
@@ -18,7 +19,7 @@ import (
 
 type gcase struct {
 	name string
-	stmt []sb.Token
+	stmt []any
 	want string
 	args []any
 }
@@ -127,7 +128,7 @@ func TestFromList(t *testing.T) {
 
 // condition: the expression productions, reached through WHERE.
 func TestExpressions(t *testing.T) {
-	where := func(items ...sb.Token) []sb.Token {
+	where := func(items ...any) []any {
 		return append(stmt(SELECT, STAR, FROM, Users, WHERE), items...)
 	}
 	const head = "SELECT * FROM users WHERE "
@@ -677,4 +678,53 @@ func TestRemainingExpressions(t *testing.T) {
 			args: []any{1, "a", 2, "b"},
 		},
 	})
+}
+
+// ===========================================================================
+// Normalization: which plain Go values become operators
+// ===========================================================================
+
+// A string is an operator when it is a well-formed PostgreSQL operator name,
+// and a value to bind otherwise. The rule is the one PostgreSQL's own lexer
+// uses (reference manual 4.1.3), so no list of operators is kept and an
+// extension operator needs nothing special.
+//
+// The two tables together are the pass-through invariant: the first is every
+// shape of string that reaches the SQL text, and the second proves that a
+// keyword-shaped or identifier-shaped string is bound instead of emitted.
+func TestOperatorNames(t *testing.T) {
+	// Emitted verbatim, binding nothing.
+	for _, op := range []string{
+		"=", "<>", "!=", ">=", "<=", ">", "<",
+		"@>", "<@", "<->", "->>", "#>>", "||", "~", "!~*",
+		"+", "-", "*", "/", "%",
+		"@-", "#-", // a trailing "-" is allowed with a special character present
+		strings.Repeat("@", 63), // the length cap, NAMEDATALEN-1
+	} {
+		t.Run("operator "+op, func(t *testing.T) {
+			assertSQL(t,
+				stmt(SELECT, STAR, FROM, Users, WHERE, UsersID, sb.RawOp(op), UsersName),
+				"SELECT * FROM users WHERE users.id "+op+" users.name",
+			)
+		})
+	}
+
+	// Bound as a parameter. Each one fails the rule for a different reason.
+	for _, name := range []string{
+		"",                 // would vanish from the output: emitter.word drops it
+		"--", "-- x", "/*", // either sequence opens a comment
+		"<-", "=-", // a trailing "-" with no special character
+		strings.Repeat("@", 64), // one over the length cap
+		"::", ",", "(", ")",     // punctuation that is not an operator character
+		"a%", "NULL", "id", // a character outside the set
+		"users.id", "1", "count(*)",
+	} {
+		t.Run("value "+name, func(t *testing.T) {
+			assertSQL(t,
+				stmt(SELECT, STAR, FROM, Users, WHERE, UsersID, EQ, name),
+				"SELECT * FROM users WHERE users.id = $1",
+				name,
+			)
+		})
+	}
 }

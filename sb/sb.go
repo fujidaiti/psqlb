@@ -94,6 +94,13 @@
 // whatever it is given: a sequence that is not valid PostgreSQL for the
 // supported subset is reported and never rendered.
 //
+// There is one decision the package takes before the position is known, and it
+// is lexical rather than grammatical: an item that is not already a token
+// becomes one at the boundary, in ToSQL, P and F. A string that is a
+// well-formed PostgreSQL operator name becomes an operator and everything else
+// becomes a value to bind. Nothing else is inferred, and Arg is the override
+// for a value whose Go string would otherwise lex as an operator.
+//
 // # Tokens
 //
 // A token is data the parser inspects, not something that renders itself. The
@@ -112,6 +119,19 @@
 // The statement itself is not a token: it is written as the arguments of
 // sb.ToSQL, which is the outermost form and the only one that is not
 // parenthesised.
+//
+// ToSQL, P and F take any, not Token, and normalize what they are given. A
+// value that already is a token stays what it is; a string that is a
+// well-formed PostgreSQL operator name becomes an operator; anything else,
+// including nil, becomes a value to bind. The rule for an operator name is
+// PostgreSQL's own (reference manual 4.1.3): every character drawn from
+//
+//	"+-*/<>=~!@#%^&|`?"
+//
+// at most 63 of them, neither "--" nor "/*" anywhere in it, and a
+// multi-character name not ending in "+" or "-" unless it also holds one of
+// the characters that cannot end one. The rule is lexical only, so "==" is well-formed and
+// PostgreSQL rejects it at execution.
 //
 // Every keyword is one word. A phrase is written as the words it is made of:
 // GROUP, BY and IS, NOT, NULL and LEFT, OUTER, JOIN. The parser reads sequences
@@ -174,9 +194,19 @@
 //
 // # Values and $N
 //
-// A plain Go value is not a token. It enters a statement only through V,
-// which binds it and produces its placeholder, or through the "$0" markers of
-// RawExpr. That is what keeps ToSQL(SELECT, "id") from compiling.
+// A plain Go value is written as itself and is bound. So is nil. There is no
+// wrapper on the common case:
+//
+//	WHERE, UsersAge, ">=", 18, AND, UsersDeleted, "IS", NULL // ">=" is an operator, 18 is bound
+//
+// V is gone and Arg has taken its place, for the one case the lexical rule
+// gets wrong: a value that is itself made only of operator characters, such as
+// a "%" LIKE pattern. Without it, "%" would be taken as an operator.
+//
+//	LIKE, sb.Arg("%") // users.name LIKE $1
+//
+// Arg is also the way to bind a []any, since a bare one is taken as a slice
+// that was meant to be spread.
 //
 // Placeholders are numbered in emission order, which is token order, so a
 // nested statement numbers correctly at any depth with no counter and no
@@ -200,9 +230,9 @@
 // "$N" for any N other than 0. The second would run, which is exactly the
 // problem: it silently reads another clause's value.
 //
-// A nil token means "this token is absent" and is dropped before parsing, which
-// is how an optional item is left in place. Removing a token can make the
-// sequence ungrammatical, and that is now reported rather than emitted.
+// A slice passed without "..." is reported too. ToSQL(parts) compiles, since a
+// slice is an any, and would otherwise bind the whole statement as a single
+// parameter.
 //
 // # Scope
 //
@@ -311,9 +341,11 @@ import (
 // token is data that the parser inspects; it does not render itself, because
 // what it renders depends on where it is written.
 //
-// Every position in the DSL takes a Token, never an any. A plain Go value is
-// not a token: it enters a statement only through V, or through the "$0"
-// markers of RawExpr. That is what keeps ToSQL(SELECT, "id") from compiling.
+// It gates nothing at compile time. Every position in the DSL takes an any,
+// and normalization decides what an item that is not already a token becomes.
+// Token is still the type Arg and RawExpr return, and it is still the set the
+// parser accepts, but a reusable fragment is a []any and not a []Token: Go
+// will not spread the latter into a variadic any.
 type Token = tok.Token
 
 // I is an identifier: a table name, a column name, an alias, or a simple type
@@ -397,7 +429,10 @@ func RawOp(sql string) Token { return tok.Operator(sql) }
 type Group struct {
 	// name is emitted immediately before the opening parenthesis: "" for P and
 	// the function name for F.
-	name  string
+	name string
+	// items came from normalize, like every []Token in this package, so it
+	// holds no Go nil. That is what lets nil mean the end of the input and
+	// nothing else while the parser reads it.
 	items []Token
 }
 
@@ -410,16 +445,16 @@ func (Group) SQLToken() {}
 //
 //	P(SELECT, UsersID, FROM, Users)    // (SELECT users.id FROM users)
 //	P(UsersIsPaid, OR, UsersHasTicket) // (users.paid OR users.has_ticket)
-//	P(V("active"), V("trial"))         // ($1, $2)
-func P(items ...Token) Group { return Group{items: dup(items)} }
+//	P("active", "trial")               // ($1, $2)
+func P(items ...any) Group { return Group{items: normalize(items)} }
 
 // F is a function call. It covers any SQL function, which is what spares the
 // package from growing separate COUNT, SUM and COALESCE helpers.
 //
 //	F("COUNT", STAR)              // COUNT(*)
 //	F("COUNT", DISTINCT, UsersID) // COUNT(DISTINCT users.id)
-func F(name string, items ...Token) Group {
-	return Group{name: name, items: dup(items)}
+func F(name string, items ...any) Group {
+	return Group{name: name, items: normalize(items)}
 }
 
 // ===========================================================================
@@ -434,9 +469,9 @@ func F(name string, items ...Token) Group {
 //
 //	ToSQL(SELECT, UsersID, FROM, Users, WHERE, UsersAge, GTE, V(18))
 //	// SELECT users.id FROM users WHERE users.age >= $1, args=[18]
-func ToSQL(items ...Token) (string, []any, error) {
+func ToSQL(items ...any) (string, []any, error) {
 	e := &emitter{}
-	p := &parser{toks: compact(items), e: e}
+	p := &parser{toks: normalize(items), e: e}
 	if err := p.statement(); err != nil {
 		return "", nil, err
 	}
@@ -450,25 +485,12 @@ func ToSQL(items ...Token) (string, []any, error) {
 // Helpers
 // ===========================================================================
 
-// dup is generic because RawExpr holds values, []any, while a group holds
-// tokens, []Token.
-func dup[T any](vs []T) []T {
-	cp := make([]T, len(vs))
+// dup copies the values a RawExpr was given, so that the fragment cannot
+// change afterwards.
+func dup(vs []any) []any {
+	cp := make([]any, len(vs))
 	copy(cp, vs)
 	return cp
-}
-
-// compact drops the nil tokens. A nil token means "this token is absent", which
-// is how an optional item is left in place; dropping them before parsing is
-// what keeps the grammar from having to mention them.
-func compact(items []Token) []Token {
-	out := make([]Token, 0, len(items))
-	for _, t := range items {
-		if t != nil {
-			out = append(out, t)
-		}
-	}
-	return out
 }
 
 func splitMarkers(sql string) ([]string, error) {

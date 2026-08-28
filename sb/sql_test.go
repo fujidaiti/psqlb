@@ -37,14 +37,14 @@ const (
 	OrdersCreated = sb.I("orders.created_at")
 )
 
-// stmt collects its arguments into a []sb.Token, so a test case can write
-// stmt(...) instead of []sb.Token{...} at each call to assertSQL or assertErr.
-func stmt(items ...sb.Token) []sb.Token { return items }
+// stmt collects its arguments into a []any, so a test case can write stmt(...)
+// instead of []any{...} at each call to assertSQL or assertErr.
+func stmt(items ...any) []any { return items }
 
 // assertSQL builds s and compares both halves of the result. Every argument
 // bound by these examples is a comparable scalar, so == is enough, and it
 // avoids the empty-versus-nil slice question.
-func assertSQL(t *testing.T, stmt []sb.Token, wantSQL string, wantArgs ...any) {
+func assertSQL(t *testing.T, stmt []any, wantSQL string, wantArgs ...any) {
 	t.Helper()
 	sql, args, err := sb.ToSQL(stmt...)
 	if err != nil {
@@ -66,7 +66,7 @@ func assertSQL(t *testing.T, stmt []sb.Token, wantSQL string, wantArgs ...any) {
 
 // assertErr builds s and requires an error mentioning wantSubstr. Nothing in
 // this package panics, so a panic here fails the test the same way.
-func assertErr(t *testing.T, stmt []sb.Token, wantSubstr string) {
+func assertErr(t *testing.T, stmt []any, wantSubstr string) {
 	t.Helper()
 	sql, _, err := sb.ToSQL(stmt...)
 	if err == nil {
@@ -396,11 +396,11 @@ func TestRecursiveCTE(t *testing.T) {
 }
 
 // $N numbering across three levels of nesting. The subquery after IN is kept as
-// a []sb.Token and spread into a sb.P, which is where its parentheses come
+// a []any and spread into a sb.P, which is where its parentheses come
 // from. The one used in FROM is a sb.Group and takes its parentheses the same
 // way.
 func TestNested(t *testing.T) {
-	inner := []sb.Token{
+	inner := []any{
 		SELECT, OrdersUserID,
 		FROM, Orders,
 		WHERE, OrdersTotal, GT, sb.V(100),
@@ -432,7 +432,7 @@ func TestNested(t *testing.T) {
 // IN takes a sb.P either way, holding a list or a subquery according to the
 // keywords inside it. ANY takes a subquery: "= ANY" does not accept a list.
 func TestInExistsNot(t *testing.T) {
-	sub := []sb.Token{SELECT, sb.V(1), FROM, Orders, WHERE, OrdersUserID, EQ, UsersID}
+	sub := []any{SELECT, sb.V(1), FROM, Orders, WHERE, OrdersUserID, EQ, UsersID}
 	assertSQL(t,
 		stmt(
 			SELECT, UsersID,
@@ -487,8 +487,8 @@ func TestDynamic(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var conds []sb.Token
-			add := func(tokens ...sb.Token) {
+			var conds []any
+			add := func(tokens ...any) {
 				if len(conds) > 0 {
 					conds = append(conds, AND)
 				}
@@ -501,7 +501,7 @@ func TestDynamic(t *testing.T) {
 				add(UsersID, GT, sb.V(c.cursor))
 			}
 
-			parts := []sb.Token{SELECT, UsersID, FROM, Users}
+			parts := []any{SELECT, UsersID, FROM, Users}
 			if len(conds) > 0 {
 				parts = append(append(parts, WHERE), conds...)
 			}
@@ -512,13 +512,15 @@ func TestDynamic(t *testing.T) {
 	}
 }
 
-// An optional token is written nil, which is dropped before parsing. Removing a
-// token can make the sequence ungrammatical, and that is now reported rather
-// than emitted.
-func TestNilIsAbsent(t *testing.T) {
+// nil is a value like any other and is bound. It used to mean "this token is
+// absent" and was dropped before parsing; it no longer is, because a bare Go
+// value cannot be told from an absent token, so dropping it would change the
+// shape of a statement according to the data in it.
+func TestNilIsAValue(t *testing.T) {
 	assertSQL(t,
-		stmt(SELECT, UsersID, nil, FROM, Users, nil),
-		"SELECT users.id FROM users",
+		stmt(SELECT, UsersID, FROM, Users, WHERE, UsersStatus, EQ, nil),
+		"SELECT users.id FROM users WHERE users.status = $1",
+		nil,
 	)
 }
 

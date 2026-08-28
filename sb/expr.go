@@ -279,7 +279,7 @@ func (p *parser) parenExpr(g Group) error {
 	if startsStatement(g) {
 		return p.parens(g, (*parser).statement)
 	}
-	if len(compact(g.items)) == 0 {
+	if len(g.items) == 0 {
 		return p.parens(g, func(*parser) error { return nil })
 	}
 	return p.parens(g, (*parser).exprList)
@@ -292,7 +292,7 @@ func (p *parser) parenExpr(g Group) error {
 // The parentheses come from F, which is a constructor rather than a keyword:
 // a function call is written with parentheses in SQL too.
 func (p *parser) call(g Group) error {
-	sub := &parser{toks: compact(g.items), e: p.e}
+	sub := &parser{toks: g.items, e: p.e}
 	p.e.open(g.name)
 	if !sub.done() {
 		if !sub.take(kw.ALL) {
