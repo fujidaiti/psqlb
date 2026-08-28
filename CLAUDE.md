@@ -154,11 +154,11 @@ in `sb/write.go`. Add to it rather than resolving it silently.
 
 ### Scope
 
-Phases 1 and 2 are in: `SELECT` with `ALL`/`DISTINCT`/`DISTINCT ON`, `FROM` with tables,
-aliased subqueries and function calls, `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET`, the
+Phases 1 to 3 are in: `SELECT` with every clause from `DISTINCT ON` to `OFFSET`, joins in
+all their forms with `ON` and `USING`, `LATERAL`, `GROUP BY`, `HAVING`, set operations, the
 expression grammar, and the three write statements with `RETURNING` and `ON CONFLICT`.
-Joins, grouping and set operations are phase 3; `WITH` and window functions are phase 4.
-See `REDESIGN.md` and the `# Scope` section of the `sb` package doc.
+`WITH` and window functions are phase 4. See `REDESIGN.md` and the `# Scope` section of the
+`sb` package doc.
 
 ## Conventions
 

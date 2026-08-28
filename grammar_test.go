@@ -415,3 +415,135 @@ func TestDelete(t *testing.T) {
 		},
 	})
 }
+
+// joined_table: from_item [NATURAL] join_type from_item [ON ... | USING (...)]
+func TestJoins(t *testing.T) {
+	run(t, []gcase{
+		{
+			name: "inner join with ON",
+			stmt: sb.S(SELECT, STAR, FROM, Users, JOIN, Orders, ON, OrdersUserID, EQ, UsersID),
+			want: "SELECT * FROM users JOIN orders ON orders.user_id = users.id",
+		},
+		{
+			name: "outer join",
+			stmt: sb.S(SELECT, STAR, FROM, Users, LEFT, OUTER, JOIN, Orders, ON, TRUE),
+			want: "SELECT * FROM users LEFT OUTER JOIN orders ON TRUE",
+		},
+		{
+			// OUTER is optional, and optional words combine rather than
+			// multiplying into separate constants.
+			name: "outer join without OUTER",
+			stmt: sb.S(SELECT, STAR, FROM, Users, FULL, JOIN, Orders, ON, TRUE),
+			want: "SELECT * FROM users FULL JOIN orders ON TRUE",
+		},
+		{
+			name: "USING",
+			stmt: sb.S(SELECT, STAR, FROM, Users, INNER, JOIN, Orders, USING, sb.S(sb.Id("user_id"))),
+			want: "SELECT * FROM users INNER JOIN orders USING (user_id)",
+		},
+		{
+			name: "cross join takes no condition",
+			stmt: sb.S(SELECT, STAR, FROM, Users, CROSS, JOIN, Orders),
+			want: "SELECT * FROM users CROSS JOIN orders",
+		},
+		{
+			name: "natural join",
+			stmt: sb.S(SELECT, STAR, FROM, Users, NATURAL, LEFT, JOIN, Orders),
+			want: "SELECT * FROM users NATURAL LEFT JOIN orders",
+		},
+		{
+			name: "a chain of joins",
+			stmt: sb.S(SELECT, STAR, FROM, Users,
+				JOIN, Orders, ON, OrdersUserID, EQ, UsersID,
+				LEFT, JOIN, sb.Id("items"), ON, sb.Id("items.order_id"), EQ, OrdersID),
+			want: "SELECT * FROM users" +
+				" JOIN orders ON orders.user_id = users.id" +
+				" LEFT JOIN items ON items.order_id = orders.id",
+		},
+		{
+			name: "join to a subquery",
+			stmt: sb.S(SELECT, STAR, FROM, Users,
+				JOIN, sb.S(SELECT, OrdersUserID, FROM, Orders), AS, sb.Id("o"),
+				ON, sb.Id("o.user_id"), EQ, UsersID),
+			want: "SELECT * FROM users" +
+				" JOIN (SELECT orders.user_id FROM orders) AS o" +
+				" ON o.user_id = users.id",
+		},
+		{
+			name: "LATERAL",
+			stmt: sb.S(SELECT, STAR, FROM, Users,
+				JOIN, LATERAL, sb.Func("unnest", UsersMeta), AS, sb.Id("m"), ON, TRUE),
+			want: "SELECT * FROM users JOIN LATERAL unnest(users.meta) AS m ON TRUE",
+		},
+	})
+}
+
+// group_by: GROUP BY grouping_element [, ...] [HAVING condition]
+func TestGroupBy(t *testing.T) {
+	run(t, []gcase{
+		{
+			name: "several keys",
+			stmt: sb.S(SELECT, UsersID, FROM, Users, GROUP, BY, UsersID, UsersName),
+			want: "SELECT users.id FROM users GROUP BY users.id, users.name",
+		},
+		{
+			name: "HAVING",
+			stmt: sb.S(SELECT, UsersID, sb.Func("COUNT", STAR), FROM, Users,
+				GROUP, BY, UsersID,
+				HAVING, sb.Func("COUNT", STAR), GT, sb.Lit(1)),
+			want: "SELECT users.id, COUNT(*) FROM users" +
+				" GROUP BY users.id" +
+				" HAVING COUNT(*) > $1",
+			args: []any{1},
+		},
+		{
+			// ROLLUP and CUBE are function-call syntax, so they need nothing of
+			// their own.
+			name: "ROLLUP",
+			stmt: sb.S(SELECT, UsersID, FROM, Users, GROUP, BY, sb.Func("ROLLUP", UsersID, UsersName)),
+			want: "SELECT users.id FROM users GROUP BY ROLLUP(users.id, users.name)",
+		},
+		{
+			name: "every clause in order",
+			stmt: sb.S(SELECT, UsersID, FROM, Users,
+				WHERE, UsersIsPaid,
+				GROUP, BY, UsersID,
+				HAVING, sb.Func("COUNT", STAR), GT, sb.Lit(1),
+				ORDER, BY, UsersID,
+				LIMIT, sb.Lit(10), OFFSET, sb.Lit(5)),
+			want: "SELECT users.id FROM users" +
+				" WHERE users.paid" +
+				" GROUP BY users.id" +
+				" HAVING COUNT(*) > $1" +
+				" ORDER BY users.id" +
+				" LIMIT $2 OFFSET $3",
+			args: []any{1, 10, 5},
+		},
+	})
+}
+
+// query: select_term [{UNION | INTERSECT | EXCEPT} [ALL | DISTINCT] select_term]
+func TestSetOperations(t *testing.T) {
+	run(t, []gcase{
+		{
+			name: "UNION",
+			stmt: sb.S(SELECT, UsersID, FROM, Users, UNION, SELECT, OrdersUserID, FROM, Orders),
+			want: "SELECT users.id FROM users UNION SELECT orders.user_id FROM orders",
+		},
+		{
+			name: "EXCEPT ALL",
+			stmt: sb.S(SELECT, UsersID, FROM, Users, EXCEPT, ALL, SELECT, OrdersUserID, FROM, Orders),
+			want: "SELECT users.id FROM users EXCEPT ALL SELECT orders.user_id FROM orders",
+		},
+		{
+			name: "three terms",
+			stmt: sb.S(SELECT, UsersID, FROM, Users,
+				INTERSECT, SELECT, OrdersUserID, FROM, Orders,
+				UNION, SELECT, sb.Lit(1)),
+			want: "SELECT users.id FROM users" +
+				" INTERSECT SELECT orders.user_id FROM orders" +
+				" UNION SELECT $1",
+			args: []any{1},
+		},
+	})
+}

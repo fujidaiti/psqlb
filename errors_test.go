@@ -189,10 +189,6 @@ func TestStatementShape(t *testing.T) {
 // user can tell "I wrote this wrong" from "this package has not got there yet".
 func TestNotSupportedYet(t *testing.T) {
 	cases := []ecase{
-		{"GROUP BY", sb.S(SELECT, UsersID, FROM, Users, GROUP, BY, UsersID), "GROUP BY"},
-		{"HAVING", sb.S(SELECT, UsersID, FROM, Users, HAVING, UsersID), "HAVING"},
-		{"JOIN", sb.S(SELECT, UsersID, FROM, Users, JOIN, Orders), "JOIN"},
-		{"set operations", sb.S(SELECT, UsersID, FROM, Users, UNION, ALL), "set operations"},
 		{"WITH", sb.S(WITH, sb.Id("t"), AS, sb.S(SELECT, UsersID, FROM, Users)), "WITH"},
 		{"FILTER", sb.S(SELECT, sb.Func("COUNT", STAR), FILTER, sb.S(WHERE, UsersIsPaid), FROM, Users), "FILTER"},
 		{"OVER", sb.S(SELECT, sb.Func("SUM", UsersAge), OVER, sb.S(), FROM, Users), "OVER"},
@@ -273,6 +269,43 @@ func TestWriteStatements(t *testing.T) {
 			name: "DO followed by neither NOTHING nor UPDATE",
 			stmt: sb.S(INSERT, INTO, Users, VALUES, sb.S(sb.Lit("a")), ON, CONFLICT, DO, SET),
 			want: "ON CONFLICT: expected keyword NOTHING or UPDATE",
+		},
+	})
+}
+
+// A join that PostgreSQL requires a condition on is not emitted without one,
+// and one that takes no condition is not emitted with one.
+func TestJoinConditions(t *testing.T) {
+	runErrs(t, []ecase{
+		{
+			name: "no condition",
+			stmt: sb.S(SELECT, STAR, FROM, Users, JOIN, Orders),
+			want: "JOIN: a join condition is required",
+		},
+		{
+			name: "a condition on a CROSS join",
+			stmt: sb.S(SELECT, STAR, FROM, Users, CROSS, JOIN, Orders, ON, TRUE),
+			want: "expected no condition, since a CROSS or NATURAL join takes none",
+		},
+		{
+			name: "USING without a group",
+			stmt: sb.S(SELECT, STAR, FROM, Users, JOIN, Orders, USING, sb.Id("user_id")),
+			want: "a parenthesised list of column names is required",
+		},
+		{
+			name: "a join type with no JOIN",
+			stmt: sb.S(SELECT, STAR, FROM, Users, LEFT, Orders),
+			want: "JOIN: expected keyword JOIN",
+		},
+		{
+			name: "LATERAL on a table",
+			stmt: sb.S(SELECT, STAR, FROM, LATERAL, Users),
+			want: "expected a subquery or a function call after LATERAL",
+		},
+		{
+			name: "a set operation with nothing after it",
+			stmt: sb.S(SELECT, UsersID, FROM, Users, UNION, ALL),
+			want: "statement: expected keyword SELECT",
 		},
 	})
 }

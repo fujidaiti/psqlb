@@ -198,10 +198,19 @@
 // reported as not supported yet. What is modelled today:
 //
 //	SELECT [ALL | DISTINCT [ON (...)]] expression [AS name] [, ...]
-//	    [FROM table | (subquery) AS alias | function(...) [AS alias] [, ...]]
+//	    [FROM from_item [, ...]]
 //	    [WHERE condition]
+//	    [GROUP BY expression [, ...]] [HAVING condition]
 //	    [ORDER BY expression [ASC|DESC] [NULLS {FIRST|LAST}] [, ...]]
 //	    [LIMIT {count | ALL}] [OFFSET start]
+//	    [{UNION | INTERSECT | EXCEPT} [ALL | DISTINCT] query]
+//
+// A from_item is a table, a parenthesised subquery with an AS alias, or a
+// function call, each optionally preceded by LATERAL, and any of them may be
+// joined:
+//
+//	from_item [NATURAL] [INNER | {LEFT|RIGHT|FULL} [OUTER] | CROSS] JOIN from_item
+//	    {ON condition | USING (column [, ...])}
 //
 //	INSERT INTO table [AS alias] [(column [, ...])]
 //	    {VALUES (expression [, ...]) [, ...] | query}
@@ -224,9 +233,8 @@
 // comparison with ANY/SOME/ALL, CASE, "::" written TYPECAST with the type name
 // as an Id, row constructors, scalar subqueries and parenthesised expressions.
 //
-// Still to come: joins, grouping and set operations, then WITH, window
-// functions and COLLATE. DDL, MERGE, locking clauses and array and JSON path
-// syntax are not planned.
+// Still to come: WITH, window functions and COLLATE. DDL, MERGE, locking
+// clauses and array and JSON path syntax are not planned.
 //
 // # Known limitations
 //

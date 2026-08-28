@@ -128,7 +128,6 @@ func TestKeyset(t *testing.T) {
 
 // Since nesting a sb.S adds parentheses, a set-operation term can carry LIMIT.
 func TestUnionWithLimit(t *testing.T) {
-	phase(t, 3, "set operations")
 	assertSQL(t,
 		sb.S(
 			sb.S(SELECT, UsersID, FROM, Users, ORDER, BY, UsersID, LIMIT, sb.Lit(10)),
@@ -346,7 +345,6 @@ func TestWindow(t *testing.T) {
 // LATERAL needs no dedicated syntax. It is a keyword, an enclosure (sb.S) and
 // an alias placed in sequence.
 func TestLateral(t *testing.T) {
-	phase(t, 3, "joins")
 	assertSQL(t,
 		sb.S(
 			SELECT, UsersName, sb.Id("t.total"),
