@@ -38,6 +38,15 @@ func (p *parser) lookahead(n int) Token {
 	return p.toks[p.pos+n]
 }
 
+// atStar reports whether the next token is the whole-row "*". It is an operator
+// token, since "*" is a well-formed operator name and is multiplication in an
+// operator position; only the two positions PostgreSQL allows the whole row in
+// ask for it here.
+func (p *parser) atStar() bool {
+	op, ok := p.peek().(tok.Operator)
+	return ok && op == star
+}
+
 // at reports whether the next token is the keyword k.
 func (p *parser) at(k tok.Keyword) bool { return p.atOffset(0, k) }
 
@@ -115,7 +124,7 @@ func (p *parser) startsExpr() bool {
 		return true
 	case tok.Keyword:
 		switch t {
-		case kw.NOT, kw.EXISTS, kw.CASE, kw.STAR, kw.TRUE, kw.FALSE, kw.NULL, kw.DEFAULT:
+		case kw.NOT, kw.EXISTS, kw.CASE, kw.TRUE, kw.FALSE, kw.NULL, kw.DEFAULT:
 			return true
 		}
 	}
@@ -386,15 +395,22 @@ func (p *parser) targetList(prod string) error {
 		if i > 0 {
 			p.e.comma()
 		}
-		if err := p.expr(prod); err != nil {
-			return err
-		}
-		if p.take(kw.AS) {
-			if err := p.alias(prod); err != nil {
+		// SELECT * and RETURNING *. No alias follows: "SELECT * AS x" is not
+		// legal SQL.
+		if p.atStar() {
+			p.pos++
+			p.e.word(string(star))
+		} else {
+			if err := p.expr(prod); err != nil {
 				return err
 			}
+			if p.take(kw.AS) {
+				if err := p.alias(prod); err != nil {
+					return err
+				}
+			}
 		}
-		if !p.startsExpr() {
+		if !p.startsExpr() && !p.atStar() {
 			return nil
 		}
 	}

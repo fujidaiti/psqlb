@@ -1,27 +1,32 @@
-// Package kw holds the SQL keywords and operators of the psqlb DSL, and
-// nothing else. It is meant to be dot-imported, so that a statement reads like
-// the SQL it produces:
+// Package kw holds the SQL keywords of the psqlb DSL, and nothing else. It is
+// meant to be dot-imported, so that a statement reads like the SQL it produces:
 //
 //	import (
 //		. "github.com/fujidaiti/psqlb/kw"
 //		"github.com/fujidaiti/psqlb/sb"
 //	)
 //
-//	sb.ToSQL(SELECT, UsersID, FROM, Users, WHERE, UsersAge, GTE, sb.V(18))
+//	sb.ToSQL(SELECT, UsersID, FROM, Users, WHERE, UsersAge, ">=", 18)
 //
-// Everything that is not a SQL keyword — ToSQL, P, F, I, V, RawExpr, RawOp —
-// lives in package sb and is written with that prefix, so that dot-importing
-// this package brings only SQL vocabulary into scope. Not even the type of
-// these constants is exported from here, for the same reason: it is in
-// internal/tok. The prefix is also what lets the names in sb be one letter. The
-// design document is the package doc comment of sb.
+// Everything that is not a SQL keyword — ToSQL, P, F, I, Arg, RawExpr — lives
+// in package sb and is written with that prefix, so that dot-importing this
+// package brings only SQL vocabulary into scope. Not even the type of these
+// constants is exported from here, for the same reason: it is in internal/tok.
+// The prefix is also what lets the names in sb be one letter. The design
+// document is the package doc comment of sb.
+//
+// There are no operators here. An operator is written as its SQL symbol — "=",
+// ">=", "@>" — and package sb decides that a string is one by PostgreSQL's own
+// lexical rule, so a constant with an invented name like EQ would be a second
+// spelling for something that already has one. The same goes for the two pieces
+// of punctuation that used to be keywords here, "*" and "::".
 //
 // Every keyword is one word. A phrase is written as the words it is made of:
 // GROUP, BY and IS, NOT, NULL and LEFT, OUTER, JOIN. The parser knows where
 // each one may appear, so a keyword needs no Go type of its own, no second
 // spelling for a second role, and no parentheses of its own.
 //
-// The constants are declared here once and the parser compares against these
+// The keywords are declared here once and the parser compares against these
 // same values, so the spelling a user writes and the value the parser matches
 // are the same thing. A keyword the parser does not know is reported as a
 // syntax error and never reaches the output.
@@ -136,39 +141,3 @@ const (
 
 // MATERIALIZED qualifies a CTE body.
 const MATERIALIZED tok.Keyword = "MATERIALIZED"
-
-// STAR is "*", the whole row. It is an expression on its own, in a SELECT list
-// and as the argument of a function.
-//
-//	SELECT, STAR, FROM, Users     // SELECT * FROM users
-//	sb.F("COUNT", STAR)           // COUNT(*)
-const STAR tok.Keyword = "*"
-
-// TYPECAST is "::". The name after it is a type name rather than an
-// expression, and both are emitted with no spaces around the operator.
-//
-//	UsersMeta, TYPECAST, sb.I("jsonb") // users.meta::jsonb
-//
-// It is spelled TYPECAST rather than CAST because PostgreSQL calls "::" a
-// typecast and reserves CAST for the CAST(x AS type) form, which is a different
-// syntax.
-const TYPECAST tok.Keyword = "::"
-
-// ===========================================================================
-// Operators
-// ===========================================================================
-
-// The operators that have a name here. Any other is written with sb.RawOp, since
-// operators are not a fixed list: extensions add their own.
-//
-// TODO: EQ, NE, GTE and the rest are not SQL spellings, which is a deviation
-// from the first golden rule. Go identifiers cannot be "=" or ">=", so the
-// alternative is sb.RawOp(">=") everywhere.
-const (
-	EQ  tok.Operator = "="
-	NE  tok.Operator = "<>"
-	GT  tok.Operator = ">"
-	GTE tok.Operator = ">="
-	LT  tok.Operator = "<"
-	LTE tok.Operator = "<="
-)

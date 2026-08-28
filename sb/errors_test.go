@@ -58,7 +58,7 @@ func TestMissingGroup(t *testing.T) {
 		},
 		{
 			name: "ANY without a group",
-			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, EQ, ANY, UsersName),
+			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, "=", ANY, UsersName),
 			want: "a parenthesised subquery or list after ANY is required",
 		},
 		{
@@ -77,12 +77,12 @@ func TestSubqueryAlias(t *testing.T) {
 	runErrs(t, []ecase{
 		{
 			name: "no alias",
-			stmt: stmt(SELECT, STAR, FROM, sub),
+			stmt: stmt(SELECT, "*", FROM, sub),
 			want: "an alias on a subquery is required",
 		},
 		{
 			name: "alias without AS",
-			stmt: stmt(SELECT, STAR, FROM, sub, sb.I("t")),
+			stmt: stmt(SELECT, "*", FROM, sub, sb.I("t")),
 			want: `write sb.P(...), AS, sb.I("t")`,
 		},
 	})
@@ -100,7 +100,7 @@ func TestExpressionShape(t *testing.T) {
 		},
 		{
 			name: "a dangling operator",
-			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, EQ),
+			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, "="),
 			want: "WHERE: expected an expression",
 		},
 		{
@@ -175,12 +175,12 @@ func TestStatementShape(t *testing.T) {
 		},
 		{
 			name: "a type name that is not an identifier",
-			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersMeta, TYPECAST, 1),
+			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersMeta, "::", 1),
 			want: "expected a type name written with sb.I or sb.RawExpr",
 		},
 		{
 			name: "a table position that takes no expression",
-			stmt: stmt(SELECT, STAR, FROM, 1),
+			stmt: stmt(SELECT, "*", FROM, 1),
 			want: "FROM: expected a table name, a subquery or a function call",
 		},
 	})
@@ -192,7 +192,7 @@ func TestNotSupportedYet(t *testing.T) {
 	cases := []ecase{
 		{
 			"ORDER BY USING",
-			stmt(SELECT, UsersID, FROM, Users, ORDER, BY, UsersID, USING, sb.RawOp(">")),
+			stmt(SELECT, UsersID, FROM, Users, ORDER, BY, UsersID, USING, ">"),
 			"ORDER BY ... USING",
 		},
 		{
@@ -227,7 +227,7 @@ func TestErrorTypes(t *testing.T) {
 	}
 
 	var missing *sb.MissingError
-	_, _, err = sb.ToSQL(SELECT, STAR, FROM, sb.P(SELECT, UsersID, FROM, Users))
+	_, _, err = sb.ToSQL(SELECT, "*", FROM, sb.P(SELECT, UsersID, FROM, Users))
 	if !errors.As(err, &missing) {
 		t.Errorf("want *sb.MissingError, got %T: %v", err, err)
 	}
@@ -239,17 +239,17 @@ func TestWriteStatements(t *testing.T) {
 	runErrs(t, []ecase{
 		{
 			name: "UPDATE without SET",
-			stmt: stmt(UPDATE, Users, WHERE, UsersID, EQ, 1),
+			stmt: stmt(UPDATE, Users, WHERE, UsersID, "=", 1),
 			want: "UPDATE: expected keyword SET",
 		},
 		{
 			name: "an assignment without =",
 			stmt: stmt(UPDATE, Users, SET, UsersStatus, "vip"),
-			want: `SET: expected operator "=", written EQ`,
+			want: `SET: expected operator "="`,
 		},
 		{
 			name: "an assignment target that is not a name",
-			stmt: stmt(UPDATE, Users, SET, 1, EQ, 2),
+			stmt: stmt(UPDATE, Users, SET, 1, "=", 2),
 			want: "SET: expected a column name written with sb.I",
 		},
 		{
@@ -286,27 +286,27 @@ func TestJoinConditions(t *testing.T) {
 	runErrs(t, []ecase{
 		{
 			name: "no condition",
-			stmt: stmt(SELECT, STAR, FROM, Users, JOIN, Orders),
+			stmt: stmt(SELECT, "*", FROM, Users, JOIN, Orders),
 			want: "JOIN: a join condition is required",
 		},
 		{
 			name: "a condition on a CROSS join",
-			stmt: stmt(SELECT, STAR, FROM, Users, CROSS, JOIN, Orders, ON, TRUE),
+			stmt: stmt(SELECT, "*", FROM, Users, CROSS, JOIN, Orders, ON, TRUE),
 			want: "expected no condition, since a CROSS or NATURAL join takes none",
 		},
 		{
 			name: "USING without a group",
-			stmt: stmt(SELECT, STAR, FROM, Users, JOIN, Orders, USING, sb.I("user_id")),
+			stmt: stmt(SELECT, "*", FROM, Users, JOIN, Orders, USING, sb.I("user_id")),
 			want: "a parenthesised list of column names is required",
 		},
 		{
 			name: "a join type with no JOIN",
-			stmt: stmt(SELECT, STAR, FROM, Users, LEFT, Orders),
+			stmt: stmt(SELECT, "*", FROM, Users, LEFT, Orders),
 			want: "JOIN: expected keyword JOIN",
 		},
 		{
 			name: "LATERAL on a table",
-			stmt: stmt(SELECT, STAR, FROM, LATERAL, Users),
+			stmt: stmt(SELECT, "*", FROM, LATERAL, Users),
 			want: "expected a subquery or a function call after LATERAL",
 		},
 		{
@@ -323,27 +323,27 @@ func TestWindowsAndCTEs(t *testing.T) {
 	runErrs(t, []ecase{
 		{
 			name: "OVER something that is neither a name nor a definition",
-			stmt: stmt(SELECT, sb.F("COUNT", STAR), OVER, 1, FROM, Users),
+			stmt: stmt(SELECT, sb.F("COUNT", "*"), OVER, 1, FROM, Users),
 			want: "expected a window name or a parenthesised window definition",
 		},
 		{
 			name: "FILTER without WHERE",
-			stmt: stmt(SELECT, sb.F("COUNT", STAR), FILTER, sb.P(UsersIsPaid), FROM, Users),
+			stmt: stmt(SELECT, sb.F("COUNT", "*"), FILTER, sb.P(UsersIsPaid), FROM, Users),
 			want: "FILTER: expected keyword WHERE",
 		},
 		{
 			name: "FILTER without a group",
-			stmt: stmt(SELECT, sb.F("COUNT", STAR), FILTER, UsersIsPaid, FROM, Users),
+			stmt: stmt(SELECT, sb.F("COUNT", "*"), FILTER, UsersIsPaid, FROM, Users),
 			want: "a parenthesised WHERE clause after FILTER is required",
 		},
 		{
 			name: "a frame bound with no direction",
-			stmt: stmt(SELECT, sb.F("COUNT", STAR), OVER, sb.P(ROWS, 3), FROM, Users),
+			stmt: stmt(SELECT, sb.F("COUNT", "*"), OVER, sb.P(ROWS, 3), FROM, Users),
 			want: "frame clause: expected keyword PRECEDING or FOLLOWING",
 		},
 		{
 			name: "BETWEEN in a frame without AND",
-			stmt: stmt(SELECT, sb.F("COUNT", STAR),
+			stmt: stmt(SELECT, sb.F("COUNT", "*"),
 				OVER, sb.P(ROWS, BETWEEN, UNBOUNDED, PRECEDING, CURRENT, ROW), FROM, Users),
 			want: "frame clause: expected keyword AND",
 		},
@@ -359,13 +359,29 @@ func TestWindowsAndCTEs(t *testing.T) {
 		},
 		{
 			name: "a CTE without AS",
-			stmt: stmt(WITH, sb.I("t"), sb.P(SELECT, UsersID, FROM, Users), SELECT, STAR),
+			stmt: stmt(WITH, sb.I("t"), sb.P(SELECT, UsersID, FROM, Users), SELECT, "*"),
 			want: "WITH: expected keyword AS",
 		},
 		{
 			name: "a CTE body that is not a group",
 			stmt: stmt(WITH, sb.I("t"), AS, SELECT, UsersID, FROM, Users),
 			want: "a parenthesised query as the body is required",
+		},
+		{
+			// The reason an operator in an operand position stays an error: it
+			// is what catches a misplaced one, since a string is decided by the
+			// lexical rule before the position is known.
+			name: "an operator where the select list begins",
+			stmt: stmt(SELECT, "=", FROM, Users),
+			want: "SELECT: expected an expression",
+		},
+		{
+			// "*" is a well-formed operator name, so it is multiplication in an
+			// operator position and the whole row only where PostgreSQL allows
+			// the whole row.
+			name: "the whole-row star in an operand position",
+			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, "=", "*"),
+			want: "WHERE: expected an expression",
 		},
 		{
 			// A slice passed without "..." is an any like any other and

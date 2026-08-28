@@ -58,7 +58,8 @@
 //
 //  1. The DSL should look like the raw SQL it produces. Tokens are written in
 //     the order SQL reads them, and a reader who knows SQL should be able to
-//     read the Go without learning a second vocabulary.
+//     read the Go without learning a second vocabulary. An operator is
+//     therefore its own symbol, ">=" and not GTE, and a value is itself.
 //
 //  2. Do not introduce a special rule or a keyword that does not exist in SQL.
 //     The package models SQL; it does not extend it. A construct that has no
@@ -109,11 +110,11 @@
 //	Token                    | Written as                | Example
 //	-------------------------|---------------------------|---------------------------
 //	Keyword                  | a constant from kw        | SELECT FROM WHERE IN OVER
-//	Operator                 | a constant, or sb.RawOp() | EQ LIKE, sb.RawOp("@>")
+//	Operator                 | a plain string            | "=", ">=", "@>", "<->"
 //	Identifier               | sb.I                      | UsersID
 //	Value                    | a plain Go value          | 42, "active", nil
 //	Group                    | sb.P(...)                 | sb.P(x, y) -> (x, y)
-//	Function call            | sb.F(name, ...)           | sb.F("COUNT", STAR)
+//	Function call            | sb.F(name, ...)           | sb.F("COUNT", "*")
 //	Hand-written expression  | sb.RawExpr()              | sb.RawExpr("x = $0", 1)
 //
 // The statement itself is not a token: it is written as the arguments of
@@ -130,8 +131,8 @@
 //
 // at most 63 of them, neither "--" nor "/*" anywhere in it, and a
 // multi-character name not ending in "+" or "-" unless it also holds one of
-// the characters that cannot end one. The rule is lexical only, so "==" is well-formed and
-// PostgreSQL rejects it at execution.
+// the characters that cannot end one. The rule is lexical only, so "==" is
+// well-formed and PostgreSQL rejects it at execution.
 //
 // Every keyword is one word. A phrase is written as the words it is made of:
 // GROUP, BY and IS, NOT, NULL and LEFT, OUTER, JOIN. The parser reads sequences
@@ -181,7 +182,7 @@
 // []any and spread it:
 //
 //	inner := []any{SELECT, OrdersUserID, FROM, Orders}
-//	sb.ToSQL(SELECT, STAR, FROM, Users, WHERE, UsersID, IN, sb.P(inner...))
+//	sb.ToSQL(SELECT, "*", FROM, Users, WHERE, UsersID, IN, sb.P(inner...))
 //
 // One more level of nesting is one more pair of parentheses, and after IN it is
 // a different query. Both are legal SQL:
@@ -274,23 +275,52 @@
 // An assignment is "column = expression" or
 // "(column [, ...]) = (expression [, ...])".
 //
-// Expressions: column references, V, RawExpr, F, named and hand-written
-// operators, AND, OR, NOT, IS [NOT] NULL/TRUE/FALSE/UNKNOWN, IS [NOT] DISTINCT
-// FROM, [NOT] IN, [NOT] BETWEEN, [NOT] LIKE/ILIKE, [NOT] SIMILAR TO, COLLATE,
-// EXISTS, a quantified comparison with ANY/SOME/ALL, CASE, "::" written
-// TYPECAST with the type name as an I, row constructors, scalar subqueries and
-// parenthesised expressions. A function call may take ALL or DISTINCT, may
+// Expressions: column references, bound values, RawExpr, F, operators, AND, OR,
+// NOT, IS [NOT] NULL/TRUE/FALSE/UNKNOWN, IS [NOT] DISTINCT FROM, [NOT] IN,
+// [NOT] BETWEEN, [NOT] LIKE/ILIKE, [NOT] SIMILAR TO, COLLATE, EXISTS, a
+// quantified comparison with ANY/SOME/ALL, CASE, "::" with the type name as an
+// I, row constructors, scalar subqueries and parenthesised expressions. A function call may take ALL or DISTINCT, may
 // order its input with ORDER BY, and may carry FILTER and OVER, the latter
 // taking a window name or a definition with PARTITION BY, ORDER BY and a RANGE,
 // ROWS or GROUPS frame.
 //
 // Not modelled: a type name with a modifier or more than one word, which is
-// written with RawExpr; the CAST(x AS type) form, written "::"; frame
+// written with RawExpr; the CAST(x AS type) form, written "::";
+// OPERATOR(schema.operator), since an operator string is emitted verbatim and
+// cannot carry a schema; frame
 // exclusion; ORDER BY ... USING; ON CONFLICT ON CONSTRAINT; FETCH and locking clauses;
 // TABLESAMPLE; DDL; MERGE; and array and JSON path syntax. Each is a candidate
 // for later work, and none of them blocks the statements above.
 //
 // # Known limitations
+//
+//   - A bare Go value is bound wherever an expression may appear, so
+//     ToSQL(SELECT, "id") compiles and produces "SELECT $1" with the argument
+//     "id". An identifier is written with I and a keyword is a constant from kw,
+//     and nothing can tell that a value was meant to be one of them. This is
+//     what taking an any costs, and what writing an operator as its own symbol
+//     buys.
+//
+//   - A string value made only of operator characters is taken for an operator,
+//     so a LIKE pattern such as "%" must be written Arg("%"). Normalization runs
+//     before parsing and cannot consult the position. It is reported rather than
+//     emitted: an operator where an operand belongs is a syntax error.
+//
+//   - Passing a slice without "..." — ToSQL(parts) for ToSQL(parts...) — is a
+//     syntax error rather than a compile error, since a slice is an any. To bind
+//     a []any deliberately, write Arg(slice).
+//
+//   - The operator rule is lexical only. "==" is a well-formed operator name, so
+//     it is emitted and PostgreSQL rejects it at execution, and so is any
+//     well-formed name with no operator behind it.
+//
+//   - SELECT, UsersID, "*" is "users.id * ...", not "SELECT users.id, *". The
+//     operator position is read first, which is how SQL reads it too, and the
+//     DSL has no comma token to separate the two. SELECT, "*" and F("COUNT",
+//     "*") are unaffected.
+//
+//   - ",", "(" and ")" are bound as values: none of them is an operator
+//     character, and parentheses are P.
 //
 //   - SET strips the table qualifier from the name that begins each assignment,
 //     since "SET users.status = ..." is not legal. This is the one rule the
@@ -418,21 +448,15 @@ func RawExpr(sql string, vals ...any) Token {
 	return rawFrag{parts: parts, vals: cp, err: err}
 }
 
-// RawOp is an operator written by hand. It exists because operators are not a
-// fixed list: extensions add their own. It is an infix operator wherever one
-// may appear, and the symbol is emitted verbatim.
-//
-//	..., WHERE, UsersMeta, RawOp("@>"), V(`{"vip":true}`) // users.meta @> $1
-func RawOp(sql string) Token { return tok.Operator(sql) }
-
 // ===========================================================================
 // Groups
 // ===========================================================================
 
-// Group is a parenthesised list of tokens. What a group means is decided by the position it is written in and
-// not by the group itself: after FROM it is a subquery, after IN it is an
-// expression list or a subquery, in an expression it is a parenthesised
-// expression or a row constructor, and after VALUES it is one row.
+// Group is a parenthesised list of tokens. What a group means is decided by the
+// position it is written in and not by the group itself: after FROM it is a
+// subquery, after IN it is an expression list or a subquery, in an expression
+// it is a parenthesised expression or a row constructor, and after VALUES it is
+// one row.
 type Group struct {
 	// name is emitted immediately before the opening parenthesis: "" for P and
 	// the function name for F.
@@ -458,7 +482,7 @@ func P(items ...any) Group { return Group{items: normalize(items)} }
 // F is a function call. It covers any SQL function, which is what spares the
 // package from growing separate COUNT, SUM and COALESCE helpers.
 //
-//	F("COUNT", STAR)              // COUNT(*)
+//	F("COUNT", "*")               // COUNT(*)
 //	F("COUNT", DISTINCT, UsersID) // COUNT(DISTINCT users.id)
 func F(name string, items ...any) Group {
 	return Group{name: name, items: normalize(items)}

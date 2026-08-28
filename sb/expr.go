@@ -65,7 +65,7 @@ func (p *parser) infix(prod string) (bool, error) {
 			p.e.word(string(t))
 			return true, p.operand(prod)
 
-		case kw.TYPECAST:
+		case typecast:
 			// x::jsonb is written with no spaces around the operator, so the
 			// type name is emitted glued to it.
 			p.pos++
@@ -243,7 +243,7 @@ func (p *parser) operand(prod string) error {
 
 	case tok.Keyword:
 		switch t {
-		case kw.STAR, kw.TRUE, kw.FALSE, kw.NULL, kw.DEFAULT:
+		case kw.TRUE, kw.FALSE, kw.NULL, kw.DEFAULT:
 			p.pos++
 			p.e.word(string(t))
 			return nil
@@ -292,6 +292,16 @@ func (p *parser) parenExpr(g Group) error {
 // The parentheses come from F, which is a constructor rather than a keyword:
 // a function call is written with parentheses in SQL too.
 func (p *parser) call(g Group) error {
+	// COUNT(*). PostgreSQL allows the whole row as the argument list itself and
+	// nowhere else in a call, so one star and nothing else is the whole rule.
+	if len(g.items) == 1 {
+		if op, ok := g.items[0].(tok.Operator); ok && op == star {
+			p.e.open(g.name)
+			p.e.word(string(star))
+			p.e.close()
+			return nil
+		}
+	}
 	sub := &parser{toks: g.items, e: p.e}
 	p.e.open(g.name)
 	if !sub.done() {

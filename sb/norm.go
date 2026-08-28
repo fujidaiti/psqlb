@@ -45,8 +45,11 @@ func asToken(item any) Token {
 		return v
 
 	case string:
-		if isOperator(v) {
+		switch {
+		case isOperator(v):
 			return tok.Operator(v)
+		case v == string(typecast):
+			return typecast
 		}
 		return value{v}
 
@@ -60,6 +63,18 @@ func asToken(item any) Token {
 		return value{item}
 	}
 }
+
+// The two pieces of SQL punctuation the parser recognises by value. Neither
+// has a constant in kw, because both are written as the string itself: "*" is a
+// well-formed operator name and comes through the rule above, while ":" is not
+// an operator character at all, so "::" is mapped here. The cost is that the
+// spelling a user writes and the value the parser compares against are two
+// things that have to agree by hand, which is also true of the "=" that the SET
+// production requires.
+const (
+	star     tok.Operator = "*"
+	typecast tok.Keyword  = "::"
+)
 
 // isOperator reports whether s is a well-formed PostgreSQL operator name. It
 // says nothing about whether such an operator exists: the rule is lexical, so

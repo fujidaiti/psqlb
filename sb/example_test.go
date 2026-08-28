@@ -22,7 +22,7 @@ func Example() {
 	sql, args, err := sb.ToSQL(
 		SELECT, usersID, usersName,
 		FROM, users,
-		WHERE, sb.P(usersCreated, usersID), LT, sb.P("2025-06-01", 500),
+		WHERE, sb.P(usersCreated, usersID), "<", sb.P("2025-06-01", 500),
 		ORDER, BY, usersCreated, DESC, usersID, DESC, NULLS, LAST,
 		LIMIT, 20,
 	)

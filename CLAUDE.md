@@ -19,28 +19,31 @@ import (
     "github.com/fujidaiti/psqlb/sb"
 )
 
-sb.ToSQL(SELECT, UsersID, FROM, Users, WHERE, UsersAge, GTE, sb.V(18))
+sb.ToSQL(SELECT, UsersID, FROM, Users, WHERE, UsersAge, ">=", 18)
 ```
 
 The module root holds no Go files.
 
-- `./kw/kw.go` — `package kw`: every SQL keyword constant, plus the six named operator
-  constants (`EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE`). Nothing else, not even the type they
-  are declared with. This is the package that is dot-imported.
+- `./kw/kw.go` — `package kw`: every SQL keyword constant and nothing else, not even the
+  type they are declared with. This is the package that is dot-imported. There are no
+  operators here: an operator is written as its SQL symbol.
 - `./sb/sb.go` — `package sb`: the design document (its package doc comment), the token
-  constructors and the entry point. `Token`, `I`, `V`, `RawExpr`, `RawOp`, `Group`, `P`,
-  `F`, `ToSQL`.
+  constructors and the entry point. `Token`, `I`, `Arg`, `RawExpr`, `Group`, `P`, `F`,
+  `ToSQL`.
 - `./sb/parse.go` — the cursor, the statement dispatcher, `WITH`, and the SELECT
   productions.
 - `./sb/write.go` — the INSERT, UPDATE and DELETE productions.
 - `./sb/window.go` — `FILTER`, `OVER`, the `WINDOW` clause and frame clauses.
 - `./sb/expr.go` — the expression productions.
+- `./sb/norm.go` — normalization: the boundary that turns a plain Go value into a token,
+  and PostgreSQL's lexical rule for an operator name.
 - `./sb/emit.go` — the output builder, `$N` binding and `RawExpr` marker substitution.
 - `./sb/errors.go` — the three error types.
 - `./internal/tok/tok.go` — `package tok`: `Token`, `Keyword` and `Operator`, and nothing
   else. The types are here rather than in `kw` because `kw` is dot-imported and must bring
-  SQL words into scope alone. `sb` aliases `Token` out of it, since a user has to name that
-  one; the rest stays internal, so a user cannot declare a keyword.
+  SQL words into scope alone. `sb` aliases `Token` out of it, since a user can see that one
+  as the return type of `Arg` and `RawExpr`; the rest stays internal, so a user cannot
+  declare a keyword.
 - `./sb/sql_test.go`, `./sb/grammar_test.go`, `./sb/errors_test.go`,
   `./sb/example_test.go` — `package sb_test`, all four external, so every test is written
   exactly the way a user writes a statement: the keywords by dot-import, everything else
@@ -106,14 +109,27 @@ nothing more, which is what keeps it small.
 ### Tokens
 
 `sb.Token` is `tok.Token`, a marker interface with one exported method. The concrete types
-are `tok.Keyword`, `tok.Operator`, `sb.I`, `sb.V`'s `value`, `sb.RawExpr`'s `rawFrag` and
-`sb.Group` (which `sb.P` and `sb.F` both build). The parser switches on them; anything
+are `tok.Keyword`, `tok.Operator`, `sb.I`, `value`, `sb.RawExpr`'s `rawFrag`, `unspread`
+and `sb.Group` (which `sb.P` and `sb.F` both build). The parser switches on them; anything
 else is an error.
 
-Every position in the DSL takes a `Token`, never `any`. A plain Go value is not a token; it
-enters only through `V`, or the `$0` markers of `RawExpr`. This is deliberate:
-`sb.ToSQL(SELECT, "id")` would otherwise compile and produce a query Postgres accepts and
-runs while returning the wrong rows.
+`ToSQL`, `P` and `F` take `...any`, and `normalize` in `sb/norm.go` turns each item into
+one of those types before the parser sees anything: a token stays what it is, a `string`
+that satisfies PostgreSQL's lexical rule for an operator name becomes `tok.Operator`,
+`"::"` becomes the typecast keyword, a `[]any` or `[]Token` becomes `unspread`, and
+everything else — `nil` included — becomes a `value` to bind. `sb.Arg` is the override, for
+a value whose Go string would otherwise lex as an operator, such as a `%` LIKE pattern.
+
+`Token` gates nothing at compile time any more. `sb.ToSQL(SELECT, "id")` compiles and
+produces `SELECT $1`, which is legal SQL that returns the wrong rows; that is the price of
+writing operators and values as themselves, and it is recorded as a limitation in the
+package doc rather than worked around. A reusable fragment is a `[]any`, since Go will not
+spread a `[]Token` into a variadic `any`.
+
+An operator in a position that wants an operand is always an error, which is what catches a
+misplaced one such as `sb.ToSQL(SELECT, "=")`. `"*"` is a well-formed operator name, so it
+is multiplication in an operator position and the whole row only where PostgreSQL allows
+the whole row: a select-list or `RETURNING` item, and the sole argument of a call.
 
 Every keyword is **one word**. Phrases are written as the words they are made of: `GROUP,
 BY`, `IS, NOT, NULL`, `LEFT, OUTER, JOIN`. The parser reads sequences natively, so a phrase
@@ -137,7 +153,14 @@ around.
 Two `RawExpr` errors are kept from the previous design: a `$0` marker count that does not
 match the value count, and a fragment containing `$N` for N other than 0.
 
-`nil` tokens mean "this token is absent" and are dropped before parsing.
+`nil` is bound as a parameter. It used to mean "this token is absent" and was dropped
+before parsing; it no longer is, because a bare Go value cannot be told from an absent
+token, so dropping it would let the data in a statement change its shape. That also keeps
+the parser's own `nil` sentinel honest: `normalize` wraps a `nil` item into a `value`, so a
+`nil` reaching `lookahead` means the end of the input and nothing else.
+
+A slice passed without `...` is reported too: `ToSQL(parts)` compiles and would otherwise
+bind the whole statement as one parameter.
 
 ### The golden rules
 
@@ -148,9 +171,9 @@ must spell them with `P`, the one group there is. `P` is always parenthesised; t
 statement is written with `sb.ToSQL(...)`, which is the one form that is not. Read that
 section before changing anything.
 
-Every keyword is now a constant; no keyword carries its own parentheses. `sb.F` is the
-one constructor that does, and it is a constructor rather than a keyword, so it sits with
-`sb.I` and `sb.V`.
+Every keyword is a constant; no keyword carries its own parentheses. `sb.F` is the one
+constructor that does, and it is a constructor rather than a keyword, so it sits with
+`sb.I` and `sb.Arg`.
 
 Two restrictions remain and are documented as such: an alias must be written with `AS`
 (which cannot be checked, and no check should be attempted — see the doc comment), and

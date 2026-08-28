@@ -83,8 +83,8 @@ func TestBasic(t *testing.T) {
 			SELECT, UsersID, UsersName,
 			FROM, Users,
 			WHERE,
-			UsersID, EQ, 0, AND,
-			UsersName, GT, "name", AND,
+			UsersID, "=", 0, AND,
+			UsersName, ">", "name", AND,
 			sb.P(UsersIsPaid, OR, UsersHasTicket),
 		),
 		"SELECT users.id, users.name"+
@@ -106,7 +106,7 @@ func TestKeyset(t *testing.T) {
 		stmt(
 			SELECT, UsersID,
 			FROM, Users,
-			WHERE, sb.P(UsersCreated, UsersID), LT, sb.P("2025-06-01", 500),
+			WHERE, sb.P(UsersCreated, UsersID), "<", sb.P("2025-06-01", 500),
 			ORDER, BY, UsersCreated, DESC, UsersID, DESC, NULLS, LAST,
 			LIMIT, 20,
 		),
@@ -134,7 +134,8 @@ func TestUnionWithLimit(t *testing.T) {
 	)
 }
 
-// Operators are written as constants or via sb.RawOp(). There is no fixed list.
+// An operator is written as its SQL symbol, whether PostgreSQL defines it or an
+// extension does. There is no list of them.
 // IS NOT NULL and IS DISTINCT FROM are ordinary keyword sequences: the parser
 // knows the phrases, so neither needs a constant or an escape hatch of its own.
 func TestOperators(t *testing.T) {
@@ -143,8 +144,8 @@ func TestOperators(t *testing.T) {
 			SELECT, UsersID,
 			FROM, Users,
 			WHERE,
-			UsersMeta, sb.RawOp("@>"), sb.RawExpr(`'{"vip": true}'`), AND,
-			UsersName, sb.RawOp("~"), "^a", AND,
+			UsersMeta, "@>", sb.RawExpr(`'{"vip": true}'`), AND,
+			UsersName, "~", "^a", AND,
 			UsersStatus, IS, DISTINCT, FROM, "banned", AND,
 			UsersEmail, IS, NOT, NULL,
 		),
@@ -170,7 +171,7 @@ func TestRawWithValues(t *testing.T) {
 			WHERE,
 			sb.RawExpr("users.meta->'profile'->>'city' = $0", "Tokyo"), AND,
 			sb.RawExpr("users.meta @> $0::jsonb", `{"vip": true}`), AND,
-			UsersStatus, EQ, "active",
+			UsersStatus, "=", "active",
 		),
 		"SELECT users.id"+
 			" FROM users"+
@@ -190,7 +191,7 @@ func TestTypecast(t *testing.T) {
 		stmt(
 			SELECT, UsersID,
 			FROM, Users,
-			WHERE, UsersMeta, sb.RawOp("@>"), `{"vip": true}`, TYPECAST, sb.I("jsonb"),
+			WHERE, UsersMeta, "@>", `{"vip": true}`, "::", sb.I("jsonb"),
 		),
 		"SELECT users.id"+
 			" FROM users"+
@@ -227,7 +228,7 @@ func TestFilterAndGroupBy(t *testing.T) {
 			SELECT,
 			UsersID,
 			UsersName,
-			sb.F("COUNT", STAR), FILTER, sb.P(WHERE, UsersIsPaid), AS, sb.I("paid_count"),
+			sb.F("COUNT", "*"), FILTER, sb.P(WHERE, UsersIsPaid), AS, sb.I("paid_count"),
 			FROM, Users,
 			GROUP, BY, UsersID, UsersName,
 		),
@@ -249,8 +250,8 @@ func TestCaseExpr(t *testing.T) {
 			SELECT,
 			UsersID,
 			CASE,
-			WHEN, UsersAge, GTE, 18, THEN, "adult",
-			WHEN, UsersAge, GTE, 13, THEN, "teen",
+			WHEN, UsersAge, ">=", 18, THEN, "adult",
+			WHEN, UsersAge, ">=", 13, THEN, "teen",
 			ELSE, "child",
 			END, AS, sb.I("bucket"),
 			FROM, Users,
@@ -278,7 +279,7 @@ func TestUpsert(t *testing.T) {
 			sb.P("bob", "bob@x"),
 			sb.P("amy", "amy@x"),
 			ON, CONFLICT, sb.P(sb.I("email")),
-			DO, UPDATE, SET, UsersName, EQ, sb.I("excluded.name"),
+			DO, UPDATE, SET, UsersName, "=", sb.I("excluded.name"),
 			RETURNING, UsersID,
 		),
 		"INSERT INTO users (name, email)"+
@@ -297,9 +298,9 @@ func TestUpsert(t *testing.T) {
 func TestUpdateFrom(t *testing.T) {
 	assertSQL(t,
 		stmt(
-			UPDATE, Users, SET, UsersStatus, EQ, "vip",
+			UPDATE, Users, SET, UsersStatus, "=", "vip",
 			FROM, Orders,
-			WHERE, OrdersUserID, EQ, UsersID, AND, OrdersTotal, GT, 10000,
+			WHERE, OrdersUserID, "=", UsersID, AND, OrdersTotal, ">", 10000,
 		),
 		"UPDATE users SET status = $1"+
 			" FROM orders"+
@@ -344,7 +345,7 @@ func TestLateral(t *testing.T) {
 			sb.P(
 				SELECT, OrdersID, OrdersTotal,
 				FROM, Orders,
-				WHERE, OrdersUserID, EQ, UsersID,
+				WHERE, OrdersUserID, "=", UsersID,
 				ORDER, BY, OrdersTotal, DESC,
 				LIMIT, 3,
 			),
@@ -370,15 +371,15 @@ func TestRecursiveCTE(t *testing.T) {
 			sb.P(
 				SELECT, UsersID, UsersParentID,
 				FROM, Users,
-				WHERE, UsersID, EQ, 9,
+				WHERE, UsersID, "=", 9,
 
 				UNION, ALL,
 
 				SELECT, UsersID, UsersParentID,
 				FROM, Users,
-				JOIN, sb.I("tree"), ON, UsersParentID, EQ, sb.I("tree.id"),
+				JOIN, sb.I("tree"), ON, UsersParentID, "=", sb.I("tree.id"),
 			),
-			SELECT, STAR,
+			SELECT, "*",
 			FROM, sb.I("tree"),
 		),
 		"WITH RECURSIVE tree AS"+
@@ -403,18 +404,18 @@ func TestNested(t *testing.T) {
 	inner := []any{
 		SELECT, OrdersUserID,
 		FROM, Orders,
-		WHERE, OrdersTotal, GT, 100,
+		WHERE, OrdersTotal, ">", 100,
 	}
 	middle := sb.P(
 		SELECT, UsersID,
 		FROM, Users,
-		WHERE, UsersID, IN, sb.P(inner...), AND, UsersAge, GT, 18,
+		WHERE, UsersID, IN, sb.P(inner...), AND, UsersAge, ">", 18,
 	)
 	assertSQL(t,
 		stmt(
-			SELECT, sb.F("COUNT", STAR),
+			SELECT, sb.F("COUNT", "*"),
 			FROM, middle, AS, sb.I("x"),
-			WHERE, sb.I("x.id"), LT, 1000,
+			WHERE, sb.I("x.id"), "<", 1000,
 		),
 		"SELECT COUNT(*)"+
 			" FROM (SELECT users.id"+
@@ -432,7 +433,7 @@ func TestNested(t *testing.T) {
 // IN takes a sb.P either way, holding a list or a subquery according to the
 // keywords inside it. ANY takes a subquery: "= ANY" does not accept a list.
 func TestInExistsNot(t *testing.T) {
-	sub := []any{SELECT, 1, FROM, Orders, WHERE, OrdersUserID, EQ, UsersID}
+	sub := []any{SELECT, 1, FROM, Orders, WHERE, OrdersUserID, "=", UsersID}
 	assertSQL(t,
 		stmt(
 			SELECT, UsersID,
@@ -440,7 +441,7 @@ func TestInExistsNot(t *testing.T) {
 			WHERE,
 			UsersStatus, IN, sb.P("active", "trial"), AND,
 			NOT, EXISTS, sb.P(sub...), AND,
-			UsersID, EQ, ANY, sb.P(SELECT, OrdersUserID, FROM, Orders),
+			UsersID, "=", ANY, sb.P(SELECT, OrdersUserID, FROM, Orders),
 		),
 		"SELECT users.id"+
 			" FROM users"+
@@ -495,10 +496,10 @@ func TestDynamic(t *testing.T) {
 				conds = append(conds, tokens...)
 			}
 			if c.status != "" {
-				add(UsersStatus, EQ, c.status)
+				add(UsersStatus, "=", c.status)
 			}
 			if c.cursor > 0 {
-				add(UsersID, GT, c.cursor)
+				add(UsersID, ">", c.cursor)
 			}
 
 			parts := []any{SELECT, UsersID, FROM, Users}
@@ -534,7 +535,7 @@ func TestArg(t *testing.T) {
 // shape of a statement according to the data in it.
 func TestNilIsAValue(t *testing.T) {
 	assertSQL(t,
-		stmt(SELECT, UsersID, FROM, Users, WHERE, UsersStatus, EQ, nil),
+		stmt(SELECT, UsersID, FROM, Users, WHERE, UsersStatus, "=", nil),
 		"SELECT users.id FROM users WHERE users.status = $1",
 		nil,
 	)
@@ -548,7 +549,7 @@ func TestRawTooFewValues(t *testing.T) {
 	// Leaving the marker in place would produce "b = $0", which Postgres rejects
 	// with "there is no parameter $0", so this is an error.
 	assertErr(t,
-		stmt(SELECT, STAR, FROM, Users, WHERE, sb.RawExpr("a = $0 AND b = $0", 1)),
+		stmt(SELECT, "*", FROM, Users, WHERE, sb.RawExpr("a = $0 AND b = $0", 1)),
 		"2 $0 marker(s) but 1 value(s)",
 	)
 }
@@ -558,7 +559,7 @@ func TestRawSurplusValues(t *testing.T) {
 	// refers to, and Postgres rejects the count mismatch, so this is an error
 	// too.
 	assertErr(t,
-		stmt(SELECT, STAR, FROM, Users, WHERE, sb.RawExpr("a = $0", 1, 2)),
+		stmt(SELECT, "*", FROM, Users, WHERE, sb.RawExpr("a = $0", 1, 2)),
 		"1 $0 marker(s) but 2 value(s)",
 	)
 }
@@ -589,7 +590,7 @@ func TestRawErrorsOnOtherPlaceholders(t *testing.T) {
 		"$$SELECT $1$$",
 	} {
 		t.Run(fragment, func(t *testing.T) {
-			assertErr(t, stmt(SELECT, STAR, FROM, Users, WHERE, sb.RawExpr(fragment)), "only $0 marks a value")
+			assertErr(t, stmt(SELECT, "*", FROM, Users, WHERE, sb.RawExpr(fragment)), "only $0 marks a value")
 		})
 	}
 }

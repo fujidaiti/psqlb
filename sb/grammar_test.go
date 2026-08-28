@@ -48,7 +48,7 @@ func TestSelectList(t *testing.T) {
 		},
 		{
 			name: "star",
-			stmt: stmt(SELECT, STAR),
+			stmt: stmt(SELECT, "*"),
 			want: "SELECT *",
 		},
 		{
@@ -81,7 +81,7 @@ func TestSelectList(t *testing.T) {
 		},
 		{
 			name: "an expression as an item",
-			stmt: stmt(SELECT, UsersAge, GTE, 18, AS, sb.I("adult"), UsersName),
+			stmt: stmt(SELECT, UsersAge, ">=", 18, AS, sb.I("adult"), UsersName),
 			want: "SELECT users.age >= $1 AS adult, users.name",
 			args: []any{18},
 		},
@@ -93,33 +93,33 @@ func TestFromList(t *testing.T) {
 	run(t, []gcase{
 		{
 			name: "table",
-			stmt: stmt(SELECT, STAR, FROM, Users),
+			stmt: stmt(SELECT, "*", FROM, Users),
 			want: "SELECT * FROM users",
 		},
 		{
 			name: "table with alias",
-			stmt: stmt(SELECT, STAR, FROM, Users, AS, sb.I("u")),
+			stmt: stmt(SELECT, "*", FROM, Users, AS, sb.I("u")),
 			want: "SELECT * FROM users AS u",
 		},
 		{
 			name: "several tables",
-			stmt: stmt(SELECT, STAR, FROM, Users, Orders),
+			stmt: stmt(SELECT, "*", FROM, Users, Orders),
 			want: "SELECT * FROM users, orders",
 		},
 		{
 			name: "subquery with alias",
-			stmt: stmt(SELECT, STAR, FROM, sb.P(SELECT, UsersID, FROM, Users), AS, sb.I("t")),
+			stmt: stmt(SELECT, "*", FROM, sb.P(SELECT, UsersID, FROM, Users), AS, sb.I("t")),
 			want: "SELECT * FROM (SELECT users.id FROM users) AS t",
 		},
 		{
 			// A function in FROM needs no alias, so it is not asked for one.
 			name: "function call",
-			stmt: stmt(SELECT, STAR, FROM, sb.F("unnest", sb.I("a"))),
+			stmt: stmt(SELECT, "*", FROM, sb.F("unnest", sb.I("a"))),
 			want: "SELECT * FROM unnest(a)",
 		},
 		{
 			name: "function call with alias",
-			stmt: stmt(SELECT, STAR, FROM, sb.F("generate_series", 1, 10), AS, sb.I("g")),
+			stmt: stmt(SELECT, "*", FROM, sb.F("generate_series", 1, 10), AS, sb.I("g")),
 			want: "SELECT * FROM generate_series($1, $2) AS g",
 			args: []any{1, 10},
 		},
@@ -129,20 +129,20 @@ func TestFromList(t *testing.T) {
 // condition: the expression productions, reached through WHERE.
 func TestExpressions(t *testing.T) {
 	where := func(items ...any) []any {
-		return append(stmt(SELECT, STAR, FROM, Users, WHERE), items...)
+		return append(stmt(SELECT, "*", FROM, Users, WHERE), items...)
 	}
 	const head = "SELECT * FROM users WHERE "
 
 	run(t, []gcase{
 		{
 			name: "named operator",
-			stmt: where(UsersAge, GTE, 18),
+			stmt: where(UsersAge, ">=", 18),
 			want: head + "users.age >= $1",
 			args: []any{18},
 		},
 		{
 			name: "hand-written operator",
-			stmt: where(UsersMeta, sb.RawOp("@>"), "{}"),
+			stmt: where(UsersMeta, "@>", "{}"),
 			want: head + "users.meta @> $1",
 			args: []any{"{}"},
 		},
@@ -222,7 +222,7 @@ func TestExpressions(t *testing.T) {
 		},
 		{
 			name: "quantified comparison",
-			stmt: where(UsersID, EQ, ANY, sb.P(SELECT, OrdersUserID, FROM, Orders)),
+			stmt: where(UsersID, "=", ANY, sb.P(SELECT, OrdersUserID, FROM, Orders)),
 			want: head + "users.id = ANY (SELECT orders.user_id FROM orders)",
 		},
 		{
@@ -232,7 +232,7 @@ func TestExpressions(t *testing.T) {
 		},
 		{
 			name: "row constructor",
-			stmt: where(sb.P(UsersID, UsersAge), EQ, sb.P(1, 2)),
+			stmt: where(sb.P(UsersID, UsersAge), "=", sb.P(1, 2)),
 			want: head + "(users.id, users.age) = ($1, $2)",
 			args: []any{1, 2},
 		},
@@ -246,35 +246,35 @@ func TestExpressions(t *testing.T) {
 		},
 		{
 			name: "typecast",
-			stmt: where(UsersMeta, TYPECAST, sb.I("jsonb"), sb.RawOp("@>"), "{}"),
+			stmt: where(UsersMeta, "::", sb.I("jsonb"), "@>", "{}"),
 			want: head + "users.meta::jsonb @> $1",
 			args: []any{"{}"},
 		},
 		{
 			name: "scalar subquery",
-			stmt: where(UsersAge, GT, sb.P(SELECT, sb.F("avg", UsersAge), FROM, Users)),
+			stmt: where(UsersAge, ">", sb.P(SELECT, sb.F("avg", UsersAge), FROM, Users)),
 			want: head + "users.age > (SELECT avg(users.age) FROM users)",
 		},
 		{
 			name: "function call",
-			stmt: where(sb.F("lower", UsersName), EQ, "a"),
+			stmt: where(sb.F("lower", UsersName), "=", "a"),
 			want: head + "lower(users.name) = $1",
 			args: []any{"a"},
 		},
 		{
 			name: "function call with DISTINCT",
-			stmt: where(sb.F("COUNT", DISTINCT, UsersID), GT, 1),
+			stmt: where(sb.F("COUNT", DISTINCT, UsersID), ">", 1),
 			want: head + "COUNT(DISTINCT users.id) > $1",
 			args: []any{1},
 		},
 		{
 			name: "function call with no arguments",
-			stmt: where(UsersCreated, LT, sb.F("now")),
+			stmt: where(UsersCreated, "<", sb.F("now")),
 			want: head + "users.created_at < now()",
 		},
 		{
 			name: "CASE with an operand",
-			stmt: where(sb.P(CASE, UsersStatus, WHEN, "a", THEN, 1, ELSE, 0, END), EQ, 1),
+			stmt: where(sb.P(CASE, UsersStatus, WHEN, "a", THEN, 1, ELSE, 0, END), "=", 1),
 			want: head + "(CASE users.status WHEN $1 THEN $2 ELSE $3 END) = $4",
 			args: []any{"a", 1, 0, 1},
 		},
@@ -354,8 +354,8 @@ func TestInsert(t *testing.T) {
 			name: "DO UPDATE with a condition",
 			stmt: stmt(INSERT, INTO, Users, VALUES, sb.P("a"),
 				ON, CONFLICT, sb.P(sb.I("email")),
-				DO, UPDATE, SET, UsersName, EQ, sb.I("excluded.name"),
-				WHERE, UsersStatus, NE, "banned",
+				DO, UPDATE, SET, UsersName, "=", sb.I("excluded.name"),
+				WHERE, UsersStatus, "<>", "banned",
 				RETURNING, UsersID, AS, sb.I("i")),
 			want: "INSERT INTO users VALUES ($1)" +
 				" ON CONFLICT (email)" +
@@ -373,9 +373,9 @@ func TestUpdate(t *testing.T) {
 		{
 			name: "several assignments",
 			stmt: stmt(UPDATE, Users, SET,
-				UsersStatus, EQ, "vip",
-				UsersName, EQ, sb.F("lower", UsersName),
-				WHERE, UsersID, EQ, 1),
+				UsersStatus, "=", "vip",
+				UsersName, "=", sb.F("lower", UsersName),
+				WHERE, UsersID, "=", 1),
 			want: "UPDATE users SET status = $1, name = lower(users.name) WHERE users.id = $2",
 			args: []any{"vip", 1},
 		},
@@ -384,14 +384,14 @@ func TestUpdate(t *testing.T) {
 			// unqualified for the same reason the single-column form's are.
 			name: "the multi-column form",
 			stmt: stmt(UPDATE, Users, SET,
-				sb.P(UsersName, UsersStatus), EQ, sb.P("a", "b")),
+				sb.P(UsersName, UsersStatus), "=", sb.P("a", "b")),
 			want: "UPDATE users SET (name, status) = ($1, $2)",
 			args: []any{"a", "b"},
 		},
 		{
 			name: "aliased table and RETURNING",
-			stmt: stmt(UPDATE, Users, AS, sb.I("u"), SET, UsersStatus, EQ, DEFAULT,
-				RETURNING, STAR),
+			stmt: stmt(UPDATE, Users, AS, sb.I("u"), SET, UsersStatus, "=", DEFAULT,
+				RETURNING, "*"),
 			want: "UPDATE users AS u SET status = DEFAULT RETURNING *",
 		},
 	})
@@ -402,14 +402,14 @@ func TestDelete(t *testing.T) {
 	run(t, []gcase{
 		{
 			name: "with a condition",
-			stmt: stmt(DELETE, FROM, Users, WHERE, UsersID, EQ, 1),
+			stmt: stmt(DELETE, FROM, Users, WHERE, UsersID, "=", 1),
 			want: "DELETE FROM users WHERE users.id = $1",
 			args: []any{1},
 		},
 		{
 			name: "USING and RETURNING",
 			stmt: stmt(DELETE, FROM, Users, USING, Orders,
-				WHERE, OrdersUserID, EQ, UsersID,
+				WHERE, OrdersUserID, "=", UsersID,
 				RETURNING, UsersID),
 			want: "DELETE FROM users USING orders" +
 				" WHERE orders.user_id = users.id" +
@@ -423,57 +423,57 @@ func TestJoins(t *testing.T) {
 	run(t, []gcase{
 		{
 			name: "inner join with ON",
-			stmt: stmt(SELECT, STAR, FROM, Users, JOIN, Orders, ON, OrdersUserID, EQ, UsersID),
+			stmt: stmt(SELECT, "*", FROM, Users, JOIN, Orders, ON, OrdersUserID, "=", UsersID),
 			want: "SELECT * FROM users JOIN orders ON orders.user_id = users.id",
 		},
 		{
 			name: "outer join",
-			stmt: stmt(SELECT, STAR, FROM, Users, LEFT, OUTER, JOIN, Orders, ON, TRUE),
+			stmt: stmt(SELECT, "*", FROM, Users, LEFT, OUTER, JOIN, Orders, ON, TRUE),
 			want: "SELECT * FROM users LEFT OUTER JOIN orders ON TRUE",
 		},
 		{
 			// OUTER is optional, and optional words combine rather than
 			// multiplying into separate constants.
 			name: "outer join without OUTER",
-			stmt: stmt(SELECT, STAR, FROM, Users, FULL, JOIN, Orders, ON, TRUE),
+			stmt: stmt(SELECT, "*", FROM, Users, FULL, JOIN, Orders, ON, TRUE),
 			want: "SELECT * FROM users FULL JOIN orders ON TRUE",
 		},
 		{
 			name: "USING",
-			stmt: stmt(SELECT, STAR, FROM, Users, INNER, JOIN, Orders, USING, sb.P(sb.I("user_id"))),
+			stmt: stmt(SELECT, "*", FROM, Users, INNER, JOIN, Orders, USING, sb.P(sb.I("user_id"))),
 			want: "SELECT * FROM users INNER JOIN orders USING (user_id)",
 		},
 		{
 			name: "cross join takes no condition",
-			stmt: stmt(SELECT, STAR, FROM, Users, CROSS, JOIN, Orders),
+			stmt: stmt(SELECT, "*", FROM, Users, CROSS, JOIN, Orders),
 			want: "SELECT * FROM users CROSS JOIN orders",
 		},
 		{
 			name: "natural join",
-			stmt: stmt(SELECT, STAR, FROM, Users, NATURAL, LEFT, JOIN, Orders),
+			stmt: stmt(SELECT, "*", FROM, Users, NATURAL, LEFT, JOIN, Orders),
 			want: "SELECT * FROM users NATURAL LEFT JOIN orders",
 		},
 		{
 			name: "a chain of joins",
-			stmt: stmt(SELECT, STAR, FROM, Users,
-				JOIN, Orders, ON, OrdersUserID, EQ, UsersID,
-				LEFT, JOIN, sb.I("items"), ON, sb.I("items.order_id"), EQ, OrdersID),
+			stmt: stmt(SELECT, "*", FROM, Users,
+				JOIN, Orders, ON, OrdersUserID, "=", UsersID,
+				LEFT, JOIN, sb.I("items"), ON, sb.I("items.order_id"), "=", OrdersID),
 			want: "SELECT * FROM users" +
 				" JOIN orders ON orders.user_id = users.id" +
 				" LEFT JOIN items ON items.order_id = orders.id",
 		},
 		{
 			name: "join to a subquery",
-			stmt: stmt(SELECT, STAR, FROM, Users,
+			stmt: stmt(SELECT, "*", FROM, Users,
 				JOIN, sb.P(SELECT, OrdersUserID, FROM, Orders), AS, sb.I("o"),
-				ON, sb.I("o.user_id"), EQ, UsersID),
+				ON, sb.I("o.user_id"), "=", UsersID),
 			want: "SELECT * FROM users" +
 				" JOIN (SELECT orders.user_id FROM orders) AS o" +
 				" ON o.user_id = users.id",
 		},
 		{
 			name: "LATERAL",
-			stmt: stmt(SELECT, STAR, FROM, Users,
+			stmt: stmt(SELECT, "*", FROM, Users,
 				JOIN, LATERAL, sb.F("unnest", UsersMeta), AS, sb.I("m"), ON, TRUE),
 			want: "SELECT * FROM users JOIN LATERAL unnest(users.meta) AS m ON TRUE",
 		},
@@ -490,9 +490,9 @@ func TestGroupBy(t *testing.T) {
 		},
 		{
 			name: "HAVING",
-			stmt: stmt(SELECT, UsersID, sb.F("COUNT", STAR), FROM, Users,
+			stmt: stmt(SELECT, UsersID, sb.F("COUNT", "*"), FROM, Users,
 				GROUP, BY, UsersID,
-				HAVING, sb.F("COUNT", STAR), GT, 1),
+				HAVING, sb.F("COUNT", "*"), ">", 1),
 			want: "SELECT users.id, COUNT(*) FROM users" +
 				" GROUP BY users.id" +
 				" HAVING COUNT(*) > $1",
@@ -510,7 +510,7 @@ func TestGroupBy(t *testing.T) {
 			stmt: stmt(SELECT, UsersID, FROM, Users,
 				WHERE, UsersIsPaid,
 				GROUP, BY, UsersID,
-				HAVING, sb.F("COUNT", STAR), GT, 1,
+				HAVING, sb.F("COUNT", "*"), ">", 1,
 				ORDER, BY, UsersID,
 				LIMIT, 10, OFFSET, 5),
 			want: "SELECT users.id FROM users" +
@@ -570,7 +570,7 @@ func TestWindowFunctions(t *testing.T) {
 		},
 		{
 			name: "OVER an empty definition",
-			stmt: stmt(SELECT, sb.F("COUNT", STAR), OVER, sb.P(), FROM, Orders),
+			stmt: stmt(SELECT, sb.F("COUNT", "*"), OVER, sb.P(), FROM, Orders),
 			want: "SELECT COUNT(*) OVER () FROM orders",
 		},
 		{
@@ -591,13 +591,13 @@ func TestWindowFunctions(t *testing.T) {
 		},
 		{
 			name: "FILTER",
-			stmt: stmt(SELECT, sb.F("COUNT", STAR), FILTER, sb.P(WHERE, UsersIsPaid), FROM, Users),
+			stmt: stmt(SELECT, sb.F("COUNT", "*"), FILTER, sb.P(WHERE, UsersIsPaid), FROM, Users),
 			want: "SELECT COUNT(*) FILTER (WHERE users.paid) FROM users",
 		},
 		{
 			name: "FILTER and OVER together",
 			stmt: stmt(SELECT,
-				sb.F("COUNT", STAR), FILTER, sb.P(WHERE, UsersIsPaid), OVER, sb.I("w"), AS, sb.I("c"),
+				sb.F("COUNT", "*"), FILTER, sb.P(WHERE, UsersIsPaid), OVER, sb.I("w"), AS, sb.I("c"),
 				FROM, Users, WINDOW, sb.I("w"), AS, sb.P()),
 			want: "SELECT COUNT(*) FILTER (WHERE users.paid) OVER w AS c" +
 				" FROM users WINDOW w AS ()",
@@ -619,13 +619,13 @@ func TestCTEs(t *testing.T) {
 	run(t, []gcase{
 		{
 			name: "one query",
-			stmt: stmt(WITH, sb.I("t"), AS, body, SELECT, STAR, FROM, sb.I("t")),
+			stmt: stmt(WITH, sb.I("t"), AS, body, SELECT, "*", FROM, sb.I("t")),
 			want: "WITH t AS (SELECT users.id FROM users) SELECT * FROM t",
 		},
 		{
 			name: "several queries",
 			stmt: stmt(WITH, sb.I("a"), AS, body, sb.I("b"), AS, body,
-				SELECT, STAR, FROM, sb.I("a")),
+				SELECT, "*", FROM, sb.I("a")),
 			want: "WITH a AS (SELECT users.id FROM users)," +
 				" b AS (SELECT users.id FROM users)" +
 				" SELECT * FROM a",
@@ -633,18 +633,18 @@ func TestCTEs(t *testing.T) {
 		{
 			name: "named columns and MATERIALIZED",
 			stmt: stmt(WITH, sb.I("t"), sb.P(sb.I("id")), AS, MATERIALIZED, body,
-				SELECT, STAR, FROM, sb.I("t")),
+				SELECT, "*", FROM, sb.I("t")),
 			want: "WITH t (id) AS MATERIALIZED (SELECT users.id FROM users) SELECT * FROM t",
 		},
 		{
 			name: "NOT MATERIALIZED",
-			stmt: stmt(WITH, sb.I("t"), AS, NOT, MATERIALIZED, body, SELECT, STAR, FROM, sb.I("t")),
+			stmt: stmt(WITH, sb.I("t"), AS, NOT, MATERIALIZED, body, SELECT, "*", FROM, sb.I("t")),
 			want: "WITH t AS NOT MATERIALIZED (SELECT users.id FROM users) SELECT * FROM t",
 		},
 		{
 			name: "in front of a write statement",
 			stmt: stmt(WITH, sb.I("t"), AS, body,
-				DELETE, FROM, Users, WHERE, UsersID, IN, sb.P(SELECT, STAR, FROM, sb.I("t"))),
+				DELETE, FROM, Users, WHERE, UsersID, IN, sb.P(SELECT, "*", FROM, sb.I("t"))),
 			want: "WITH t AS (SELECT users.id FROM users)" +
 				" DELETE FROM users WHERE users.id IN (SELECT * FROM t)",
 		},
@@ -703,11 +703,21 @@ func TestOperatorNames(t *testing.T) {
 	} {
 		t.Run("operator "+op, func(t *testing.T) {
 			assertSQL(t,
-				stmt(SELECT, STAR, FROM, Users, WHERE, UsersID, sb.RawOp(op), UsersName),
+				stmt(SELECT, "*", FROM, Users, WHERE, UsersID, op, UsersName),
 				"SELECT * FROM users WHERE users.id "+op+" users.name",
 			)
 		})
 	}
+
+	// "::" is neither: ":" is not an operator character, so it cannot come
+	// through the rule, and normalization maps it to the typecast keyword.
+	t.Run(`typecast "::"`, func(t *testing.T) {
+		assertSQL(t,
+			stmt(SELECT, UsersID, FROM, Users, WHERE, UsersMeta, "@>", `{}`, "::", sb.I("jsonb")),
+			"SELECT users.id FROM users WHERE users.meta @> $1::jsonb",
+			`{}`,
+		)
+	})
 
 	// Bound as a parameter. Each one fails the rule for a different reason.
 	for _, name := range []string{
@@ -715,13 +725,13 @@ func TestOperatorNames(t *testing.T) {
 		"--", "-- x", "/*", // either sequence opens a comment
 		"<-", "=-", // a trailing "-" with no special character
 		strings.Repeat("@", 64), // one over the length cap
-		"::", ",", "(", ")",     // punctuation that is not an operator character
+		",", "(", ")",           // punctuation that is not an operator character
 		"a%", "NULL", "id", // a character outside the set
 		"users.id", "1", "count(*)",
 	} {
 		t.Run("value "+name, func(t *testing.T) {
 			assertSQL(t,
-				stmt(SELECT, STAR, FROM, Users, WHERE, UsersID, EQ, name),
+				stmt(SELECT, "*", FROM, Users, WHERE, UsersID, "=", name),
 				"SELECT * FROM users WHERE users.id = $1",
 				name,
 			)

@@ -3,10 +3,10 @@
 //
 // It exists because both public packages must name the keyword type and
 // neither can own it: kw types its constants with it, and sb switches on it
-// while parsing, and sb imports kw. The types are here rather than in kw
-// because kw is dot-imported, and a dot-import must bring SQL words into the
-// user's file scope and nothing else. The one name a user does need, Token, is
-// aliased out of here by sb.
+// while parsing and constructs one for "::", and sb imports kw. The types are
+// here rather than in kw because kw is dot-imported, and a dot-import must
+// bring SQL words into the user's file scope and nothing else. The one name a
+// user can see, Token, is aliased out of here by sb.
 //
 // There is one keyword type. What a keyword means is decided by the grammar
 // position it is parsed in, not by its Go type.
@@ -27,9 +27,10 @@ type Keyword string
 
 func (Keyword) SQLToken() {}
 
-// Operator is an operator symbol written by hand, which is what sb.RawOp
-// produces. Operators are not a fixed list, since extensions add their own, so
-// only the six named ones are enumerated, in package kw.
+// Operator is an operator symbol. It is produced only by normalization in sb,
+// from a string that satisfies PostgreSQL's lexical rule for an operator name,
+// so there is no list of operators anywhere and an operator an extension
+// defines needs nothing that a core one does not.
 type Operator string
 
 func (Operator) SQLToken() {}

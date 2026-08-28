@@ -239,7 +239,7 @@ func (p *parser) assignment() error {
 
 	op, ok := p.peek().(tok.Operator)
 	if !ok || op != "=" {
-		return p.unexpected("SET", `operator "=", written EQ`)
+		return p.unexpected("SET", `operator "="`)
 	}
 	p.pos++
 	p.e.word("=")
