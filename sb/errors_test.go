@@ -373,7 +373,7 @@ func TestWindowsAndCTEs(t *testing.T) {
 			// lexical rule before the position is known.
 			name: "an operator where the select list begins",
 			stmt: stmt(SELECT, "=", FROM, Users),
-			want: "SELECT: expected an expression",
+			want: `expected an expression, got operator "="`,
 		},
 		{
 			// "*" is a well-formed operator name, so it is multiplication in an
@@ -382,6 +382,14 @@ func TestWindowsAndCTEs(t *testing.T) {
 			name: "the whole-row star in an operand position",
 			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, "=", "*"),
 			want: "WHERE: expected an expression",
+		},
+		{
+			// The hint is worded as a condition and not an instruction: here
+			// the fix is sb.Arg, and for a misplaced operator it is to move the
+			// operator.
+			name: "a LIKE pattern that lexes as an operator",
+			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersName, LIKE, "%"),
+			want: `write sb.Arg("%") if that string was meant as a value`,
 		},
 		{
 			// A slice passed without "..." is an any like any other and
@@ -394,7 +402,7 @@ func TestWindowsAndCTEs(t *testing.T) {
 		{
 			name: "a fragment passed to sb.P as one slice",
 			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, IN, sb.P([]any{1, 2})),
-			want: `a slice of 2 items passed without "..."`,
+			want: `a slice of 2 items passed without "..." (token 0); write the slice with "..."`,
 		},
 		{
 			name: "WITH with no statement after it",

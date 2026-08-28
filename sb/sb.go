@@ -218,7 +218,12 @@
 // ToSQL returns an error and nothing panics. There are three classes:
 //
 //   - SyntaxError: the token is not legal at this point in the grammar. The
-//     message names the production, what was expected and what was found.
+//     message names the production, what was expected and what was found, and
+//     where the mistake has a known shape it names the way to write it. An
+//     operator where an operand belongs is the one that matters: normalization
+//     decides that a string is an operator before the position is known, so
+//     ToSQL(SELECT, "=") is reported here, and so is a value the lexical rule
+//     took for an operator, such as a "%" LIKE pattern.
 //   - MissingError: the position requires something that is not there — a group
 //     where SQL parenthesises, or the alias PostgreSQL requires on a subquery in
 //     FROM. The message names the way to write it.

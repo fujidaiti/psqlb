@@ -13,11 +13,16 @@ type SyntaxError struct {
 	Production string // the grammar production being parsed
 	Want       string // what would have been legal here
 	Got        string // what was found instead
+	Fix        string // how to write it, when the mistake has a known shape
 	Pos        int    // index of the offending token within its group
 }
 
 func (e *SyntaxError) Error() string {
-	return fmt.Sprintf("psqlb: %s: expected %s, got %s (token %d)", e.Production, e.Want, e.Got, e.Pos)
+	s := fmt.Sprintf("psqlb: %s: expected %s, got %s (token %d)", e.Production, e.Want, e.Got, e.Pos)
+	if e.Fix != "" {
+		s += "; write " + e.Fix
+	}
+	return s
 }
 
 // MissingError says that a position requires something that is not there: a

@@ -267,7 +267,7 @@ func (p *parser) operand(prod string) error {
 			return p.caseExpr()
 		}
 	}
-	return p.unexpected(prod, "an expression")
+	return p.unexpectedOperand(prod, "an expression")
 }
 
 // parenExpr parses a group met in an expression position. What it holds is

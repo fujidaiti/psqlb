@@ -81,8 +81,24 @@ func (p *parser) want(prod string, k tok.Keyword) error {
 	return p.unexpected(prod, "keyword "+string(k))
 }
 
-func (p *parser) unexpected(prod, want string) error {
+func (p *parser) unexpected(prod, want string) *SyntaxError {
 	return &SyntaxError{Production: prod, Want: want, Got: describe(p.peek()), Pos: p.pos}
+}
+
+// unexpectedOperand reports a token that cannot begin an operand, and names the
+// way out when the token is one normalization produced from a plain Go value.
+// An operator here is the misplacement this package is meant to catch —
+// ToSQL(SELECT, "=") — and it has two shapes: the string was an operator in the
+// wrong place, or it was a value the lexical rule took for an operator.
+func (p *parser) unexpectedOperand(prod, want string) error {
+	e := p.unexpected(prod, want)
+	switch t := p.peek().(type) {
+	case tok.Operator:
+		e.Fix = fmt.Sprintf("sb.Arg(%q) if that string was meant as a value", string(t))
+	case unspread:
+		e.Fix = `the slice with "..."`
+	}
+	return e
 }
 
 // describe names a token the way it is written, so that an error message can be

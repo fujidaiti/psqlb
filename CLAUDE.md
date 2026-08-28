@@ -144,7 +144,9 @@ looks inside the string.
 ### Errors
 
 Three types in `sb/errors.go`, all returned from `ToSQL`, and nothing panics:
-`SyntaxError` (the token is not legal here), `MissingError` (the position requires
+`SyntaxError` (the token is not legal here, with a `Fix` naming the way to write it where
+the mistake has a known shape — an operator where an operand belongs names `sb.Arg`),
+`MissingError` (the position requires
 something absent — a group where SQL parenthesises, the alias PostgreSQL requires on a
 subquery in `FROM`), and `UnsupportedError` (legal PostgreSQL, outside the modelled
 subset). Coverage grows in phases; incompleteness is reported honestly rather than worked
