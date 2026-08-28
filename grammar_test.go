@@ -312,3 +312,106 @@ func TestOrderLimitOffset(t *testing.T) {
 		},
 	})
 }
+
+// insert: INSERT INTO table [(columns)] {VALUES (...) [, ...] | query}
+//
+//	[ON CONFLICT ...] [RETURNING ...]
+func TestInsert(t *testing.T) {
+	run(t, []gcase{
+		{
+			name: "one row",
+			stmt: sb.S(INSERT, INTO, Users, VALUES, sb.S(sb.Lit("a"), sb.Lit("b"))),
+			want: "INSERT INTO users VALUES ($1, $2)",
+			args: []any{"a", "b"},
+		},
+		{
+			name: "named columns and several rows",
+			stmt: sb.S(INSERT, INTO, Users, sb.S(sb.Id("name"), sb.Id("email")),
+				VALUES, sb.S(sb.Lit("a"), sb.Lit("b")), sb.S(sb.Lit("c"), DEFAULT)),
+			want: "INSERT INTO users (name, email) VALUES ($1, $2), ($3, DEFAULT)",
+			args: []any{"a", "b", "c"},
+		},
+		{
+			// The query is not parenthesised, so it is written in place.
+			name: "from a query",
+			stmt: sb.S(INSERT, INTO, Users, sb.S(sb.Id("id")),
+				SELECT, OrdersUserID, FROM, Orders),
+			want: "INSERT INTO users (id) SELECT orders.user_id FROM orders",
+		},
+		{
+			name: "DO NOTHING",
+			stmt: sb.S(INSERT, INTO, Users, VALUES, sb.S(sb.Lit("a")),
+				ON, CONFLICT, DO, NOTHING),
+			want: "INSERT INTO users VALUES ($1) ON CONFLICT DO NOTHING",
+			args: []any{"a"},
+		},
+		{
+			// excluded.name is an ordinary qualified name. SET strips the
+			// qualifier from the target on the left of the "=" only, so the
+			// expression on the right keeps its own.
+			name: "DO UPDATE with a condition",
+			stmt: sb.S(INSERT, INTO, Users, VALUES, sb.S(sb.Lit("a")),
+				ON, CONFLICT, sb.S(sb.Id("email")),
+				DO, UPDATE, SET, UsersName, EQ, sb.Id("excluded.name"),
+				WHERE, UsersStatus, NE, sb.Lit("banned"),
+				RETURNING, UsersID, AS, sb.Id("i")),
+			want: "INSERT INTO users VALUES ($1)" +
+				" ON CONFLICT (email)" +
+				" DO UPDATE SET name = excluded.name" +
+				" WHERE users.status <> $2" +
+				" RETURNING users.id AS i",
+			args: []any{"a", "banned"},
+		},
+	})
+}
+
+// update: UPDATE table [AS alias] SET ... [FROM ...] [WHERE ...] [RETURNING ...]
+func TestUpdate(t *testing.T) {
+	run(t, []gcase{
+		{
+			name: "several assignments",
+			stmt: sb.S(UPDATE, Users, SET,
+				UsersStatus, EQ, sb.Lit("vip"),
+				UsersName, EQ, sb.Func("lower", UsersName),
+				WHERE, UsersID, EQ, sb.Lit(1)),
+			want: "UPDATE users SET status = $1, name = lower(users.name) WHERE users.id = $2",
+			args: []any{"vip", 1},
+		},
+		{
+			// The multi-column form is supported, and its targets are
+			// unqualified for the same reason the single-column form's are.
+			name: "the multi-column form",
+			stmt: sb.S(UPDATE, Users, SET,
+				sb.S(UsersName, UsersStatus), EQ, sb.S(sb.Lit("a"), sb.Lit("b"))),
+			want: "UPDATE users SET (name, status) = ($1, $2)",
+			args: []any{"a", "b"},
+		},
+		{
+			name: "aliased table and RETURNING",
+			stmt: sb.S(UPDATE, Users, AS, sb.Id("u"), SET, UsersStatus, EQ, DEFAULT,
+				RETURNING, STAR),
+			want: "UPDATE users AS u SET status = DEFAULT RETURNING *",
+		},
+	})
+}
+
+// delete: DELETE FROM table [AS alias] [USING ...] [WHERE ...] [RETURNING ...]
+func TestDelete(t *testing.T) {
+	run(t, []gcase{
+		{
+			name: "with a condition",
+			stmt: sb.S(DELETE, FROM, Users, WHERE, UsersID, EQ, sb.Lit(1)),
+			want: "DELETE FROM users WHERE users.id = $1",
+			args: []any{1},
+		},
+		{
+			name: "USING and RETURNING",
+			stmt: sb.S(DELETE, FROM, Users, USING, Orders,
+				WHERE, OrdersUserID, EQ, UsersID,
+				RETURNING, UsersID),
+			want: "DELETE FROM users USING orders" +
+				" WHERE orders.user_id = users.id" +
+				" RETURNING users.id",
+		},
+	})
+}

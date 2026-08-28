@@ -203,17 +203,39 @@
 //	    [ORDER BY expression [ASC|DESC] [NULLS {FIRST|LAST}] [, ...]]
 //	    [LIMIT {count | ALL}] [OFFSET start]
 //
+//	INSERT INTO table [AS alias] [(column [, ...])]
+//	    {VALUES (expression [, ...]) [, ...] | query}
+//	    [ON CONFLICT [(column [, ...])] DO NOTHING
+//	                                   | DO UPDATE SET ... [WHERE condition]]
+//	    [RETURNING expression [AS name] [, ...]]
+//
+//	UPDATE table [AS alias] SET assignment [, ...]
+//	    [FROM from_item [, ...]] [WHERE condition] [RETURNING ...]
+//
+//	DELETE FROM table [AS alias]
+//	    [USING from_item [, ...]] [WHERE condition] [RETURNING ...]
+//
+// An assignment is "column = expression" or
+// "(column [, ...]) = (expression [, ...])".
+//
 // Expressions: column references, Lit, Raw, Func, named and hand-written
 // operators, AND, OR, NOT, IS [NOT] NULL/TRUE/FALSE/UNKNOWN, IS [NOT] DISTINCT
 // FROM, [NOT] IN, [NOT] BETWEEN, [NOT] LIKE/ILIKE, EXISTS, a quantified
 // comparison with ANY/SOME/ALL, CASE, "::" written TYPECAST with the type name
 // as an Id, row constructors, scalar subqueries and parenthesised expressions.
 //
-// Still to come: writes and RETURNING, then joins and grouping and set
-// operations, then WITH, window functions and COLLATE. DDL, MERGE, locking
-// clauses and array and JSON path syntax are not planned.
+// Still to come: joins, grouping and set operations, then WITH, window
+// functions and COLLATE. DDL, MERGE, locking clauses and array and JSON path
+// syntax are not planned.
 //
 // # Known limitations
+//
+//   - SET strips the table qualifier from the name that begins each assignment,
+//     since "SET users.status = ..." is not legal. This is the one rule the
+//     package has that SQL does not, kept because the qualified column constant
+//     is the one already at hand. It applies at that grammar position only, so
+//     the expression to the right of the "=" keeps its qualifiers and so does
+//     the column list of INSERT.
 //
 //   - An alias must be written with AS. SELECT, UsersID, sb.Id("x") emits
 //     "SELECT users.id, x", never "SELECT users.id AS x". SQL allows the

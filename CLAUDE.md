@@ -28,7 +28,8 @@ sb.S(SELECT, UsersID, FROM, Users, WHERE, UsersAge, GTE, sb.Lit(18))
 - `./sb/sb.go` — `package sb`: the design document (its package doc comment), the token
   constructors and the entry point. `Token`, `Id`, `Lit`, `Raw`, `Op`, `Group`, `S`,
   `Func`, `ToSQL`.
-- `./sb/parse.go` — the cursor and the statement productions.
+- `./sb/parse.go` — the cursor and the SELECT productions.
+- `./sb/write.go` — the INSERT, UPDATE and DELETE productions.
 - `./sb/expr.go` — the expression productions.
 - `./sb/emit.go` — the output builder, `$N` binding and `Raw` marker substitution.
 - `./sb/errors.go` — the three error types.
@@ -147,16 +148,17 @@ one constructor that does, and it is a constructor rather than a keyword, so it 
 
 Two restrictions remain and are documented as such: an alias must be written with `AS`
 (which cannot be checked, and no check should be attempted — see the doc comment), and
-`SET` will strip the table qualifier from the name that begins each assignment when writes
-land in phase 2.
+`SET` strips the table qualifier from the name that begins each assignment. The second is
+the only rule the package has that SQL does not; it is recorded as a `TODO:` on `setList`
+in `sb/write.go`. Add to it rather than resolving it silently.
 
 ### Scope
 
-Phase 1 is in: `SELECT` with `ALL`/`DISTINCT`/`DISTINCT ON`, `FROM` with tables, aliased
-subqueries and function calls, `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET`, and the expression
-grammar. Writes are phase 2, joins and grouping and set operations phase 3, `WITH` and
-window functions phase 4. See `REDESIGN.md` and the `# Scope` section of the `sb` package
-doc.
+Phases 1 and 2 are in: `SELECT` with `ALL`/`DISTINCT`/`DISTINCT ON`, `FROM` with tables,
+aliased subqueries and function calls, `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET`, the
+expression grammar, and the three write statements with `RETURNING` and `ON CONFLICT`.
+Joins, grouping and set operations are phase 3; `WITH` and window functions are phase 4.
+See `REDESIGN.md` and the `# Scope` section of the `sb` package doc.
 
 ## Conventions
 

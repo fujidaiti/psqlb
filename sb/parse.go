@@ -175,18 +175,18 @@ func (p *parser) statement() error {
 	switch {
 	case p.at(kw.SELECT):
 		return p.selectStmt()
+	case p.at(kw.INSERT):
+		return p.insertStmt()
+	case p.at(kw.UPDATE):
+		return p.updateStmt()
+	case p.at(kw.DELETE):
+		return p.deleteStmt()
 	case p.at(kw.WITH):
 		return &UnsupportedError{"WITH"}
-	case p.at(kw.INSERT):
-		return &UnsupportedError{"INSERT"}
-	case p.at(kw.UPDATE):
-		return &UnsupportedError{"UPDATE"}
-	case p.at(kw.DELETE):
-		return &UnsupportedError{"DELETE"}
 	case p.at(kw.VALUES):
 		return &UnsupportedError{"a bare VALUES statement"}
 	}
-	return p.unexpected("statement", "keyword SELECT")
+	return p.unexpected("statement", "keyword SELECT, INSERT, UPDATE or DELETE")
 }
 
 // selectStmt implements, of the SELECT synopsis:
@@ -257,23 +257,24 @@ func (p *parser) selectStmt() error {
 	return nil
 }
 
-// selectList parses the output list.
+// targetList parses an output list: the one after SELECT and the one after
+// RETURNING, which have the same grammar.
 //
 //	expression [ AS output_name ] [, ...]
 //
 // The comma is written by this production, which is the whole reason the
 // package exists. An alias must be written with AS: an identifier standing on
 // its own is the next item of the list, never an alias for the one before it.
-func (p *parser) selectList() error {
+func (p *parser) targetList(prod string) error {
 	for i := 0; ; i++ {
 		if i > 0 {
 			p.e.comma()
 		}
-		if err := p.expr("SELECT"); err != nil {
+		if err := p.expr(prod); err != nil {
 			return err
 		}
 		if p.take(kw.AS) {
-			if err := p.alias("SELECT"); err != nil {
+			if err := p.alias(prod); err != nil {
 				return err
 			}
 		}
@@ -281,6 +282,17 @@ func (p *parser) selectList() error {
 			return nil
 		}
 	}
+}
+
+func (p *parser) selectList() error { return p.targetList("SELECT") }
+
+// returning parses the optional RETURNING clause the three write statements
+// share.
+func (p *parser) returning() error {
+	if !p.take(kw.RETURNING) {
+		return nil
+	}
+	return p.targetList("RETURNING")
 }
 
 func (p *parser) alias(prod string) error {

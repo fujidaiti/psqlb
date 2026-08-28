@@ -280,7 +280,6 @@ func TestCaseExpr(t *testing.T) {
 // strips the qualifier from the name to the left of the "=" and leaves the
 // expression to its right alone, so the two do not collide.
 func TestUpsert(t *testing.T) {
-	phase(t, 2, "INSERT")
 	assertSQL(t,
 		sb.S(
 			INSERT, INTO, Users, sb.S(sb.Id("name"), sb.Id("email")),
@@ -305,7 +304,6 @@ func TestUpsert(t *testing.T) {
 // SET strips the qualifier from the name that begins each assignment. FROM
 // closes the SET list, so orders.user_id keeps its qualifier.
 func TestUpdateFrom(t *testing.T) {
-	phase(t, 2, "UPDATE")
 	assertSQL(t,
 		sb.S(
 			UPDATE, Users, SET, UsersStatus, EQ, sb.Lit("vip"),

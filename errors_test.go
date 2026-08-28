@@ -165,7 +165,7 @@ func TestStatementShape(t *testing.T) {
 		{
 			name: "not a statement",
 			stmt: sb.S(FROM, Users),
-			want: "statement: expected keyword SELECT",
+			want: "statement: expected keyword SELECT, INSERT, UPDATE or DELETE",
 		},
 		{
 			name: "an alias that is not an identifier",
@@ -194,9 +194,6 @@ func TestNotSupportedYet(t *testing.T) {
 		{"JOIN", sb.S(SELECT, UsersID, FROM, Users, JOIN, Orders), "JOIN"},
 		{"set operations", sb.S(SELECT, UsersID, FROM, Users, UNION, ALL), "set operations"},
 		{"WITH", sb.S(WITH, sb.Id("t"), AS, sb.S(SELECT, UsersID, FROM, Users)), "WITH"},
-		{"INSERT", sb.S(INSERT, INTO, Users), "INSERT"},
-		{"UPDATE", sb.S(UPDATE, Users), "UPDATE"},
-		{"DELETE", sb.S(DELETE, FROM, Users), "DELETE"},
 		{"FILTER", sb.S(SELECT, sb.Func("COUNT", STAR), FILTER, sb.S(WHERE, UsersIsPaid), FROM, Users), "FILTER"},
 		{"OVER", sb.S(SELECT, sb.Func("SUM", UsersAge), OVER, sb.S(), FROM, Users), "OVER"},
 		{"COLLATE", sb.S(SELECT, UsersID, FROM, Users, WHERE, UsersName, COLLATE, sb.Id("c")), "COLLATE"},
@@ -231,4 +228,51 @@ func TestErrorTypes(t *testing.T) {
 	if !errors.As(err, &missing) {
 		t.Errorf("want *sb.MissingError, got %T: %v", err, err)
 	}
+}
+
+// The write statements are checked the same way. SET is the one position where
+// a name is rewritten, so it is also the one that has to say what it expects.
+func TestWriteStatements(t *testing.T) {
+	runErrs(t, []ecase{
+		{
+			name: "UPDATE without SET",
+			stmt: sb.S(UPDATE, Users, WHERE, UsersID, EQ, sb.Lit(1)),
+			want: "UPDATE: expected keyword SET",
+		},
+		{
+			name: "an assignment without =",
+			stmt: sb.S(UPDATE, Users, SET, UsersStatus, sb.Lit("vip")),
+			want: `SET: expected operator "=", written EQ`,
+		},
+		{
+			name: "an assignment target that is not a name",
+			stmt: sb.S(UPDATE, Users, SET, sb.Lit(1), EQ, sb.Lit(2)),
+			want: "SET: expected a column name written with sb.Id",
+		},
+		{
+			name: "DELETE without FROM",
+			stmt: sb.S(DELETE, Users),
+			want: "DELETE: expected keyword FROM",
+		},
+		{
+			name: "INSERT with neither VALUES nor a query",
+			stmt: sb.S(INSERT, INTO, Users, sb.S(sb.Id("name"))),
+			want: "INSERT: expected keyword VALUES or a query",
+		},
+		{
+			name: "VALUES without a group",
+			stmt: sb.S(INSERT, INTO, Users, VALUES, sb.Lit("a"), sb.Lit("b")),
+			want: "a parenthesised row after VALUES is required",
+		},
+		{
+			name: "ON CONFLICT without DO",
+			stmt: sb.S(INSERT, INTO, Users, VALUES, sb.S(sb.Lit("a")), ON, CONFLICT, NOTHING),
+			want: "ON CONFLICT: expected keyword DO",
+		},
+		{
+			name: "DO followed by neither NOTHING nor UPDATE",
+			stmt: sb.S(INSERT, INTO, Users, VALUES, sb.S(sb.Lit("a")), ON, CONFLICT, DO, SET),
+			want: "ON CONFLICT: expected keyword NOTHING or UPDATE",
+		},
+	})
 }
