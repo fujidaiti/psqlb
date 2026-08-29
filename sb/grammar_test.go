@@ -738,3 +738,44 @@ func TestOperatorNames(t *testing.T) {
 		})
 	}
 }
+
+// An operator is the one thing a caller writes that reaches the SQL text
+// verbatim, so it is the one place a string could carry SQL of its own. It
+// cannot: a string is emitted only when every byte of it is an operator
+// character, which leaves out the letter, the digit, the space, the quote, the
+// parenthesis, the comma and the semicolon, and "--" and "/*" are rejected
+// outright. A payload therefore fails the rule, binds as a parameter, and is
+// then met by a production that wanted an operator.
+//
+// This says nothing about sb.I and sb.RawExpr, which are emitted as written
+// and are documented as the two places a caller must not put untrusted input.
+func TestOperatorPositionIsNotInjectable(t *testing.T) {
+	for _, payload := range []string{
+		"= 0 OR 1 = 1 OR 0 =",       // the shape this test exists for
+		"=0OR1=1OR0=",               // the same with no space to fail on
+		"= 1; DROP TABLE users; --", // a second statement
+		"= users.id --",             // commenting out the rest of the clause
+		"'", "''", `"`,              // a quote, to break out of a literal
+		") OR (", "(1=1)", // a parenthesis, to break out of a group
+		"= ANY", "IS NOT NULL", // SQL written as a word rather than a symbol
+	} {
+		t.Run(payload, func(t *testing.T) {
+			assertErr(t,
+				stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, payload, 1),
+				"expected the end of the statement, got a value")
+		})
+	}
+
+	// What does survive the rule is a single operator token and nothing more.
+	// "*/" is a well-formed operator name — the rule forbids "/*" and not its
+	// reverse — and is harmless for the same reason the rest are: no fragment
+	// this package emits can open the comment it would close.
+	for _, name := range []string{"*/", "=", "!!!"} {
+		t.Run("survives "+name, func(t *testing.T) {
+			assertSQL(t,
+				stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, name, 1),
+				"SELECT users.id FROM users WHERE users.id "+name+" $1",
+				1)
+		})
+	}
+}

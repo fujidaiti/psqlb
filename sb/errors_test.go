@@ -368,6 +368,22 @@ func TestWindowsAndCTEs(t *testing.T) {
 			want: "a parenthesised query as the body is required",
 		},
 		{
+			name: "WITH with no statement after it",
+			stmt: stmt(WITH, sb.I("t"), AS, sb.P(SELECT, UsersID, FROM, Users)),
+			want: "statement: expected keyword SELECT",
+		},
+	})
+}
+
+// A string is decided by the lexical rule before the position is known, so an
+// operator can land where the grammar wants something else. Every such position
+// reports it, naming what it wanted rather than what an operator is. The sb.Arg
+// hint is attached at one position only — the one that wanted an expression —
+// because that is the only place where "you meant a value" is the likely
+// mistake: binding a parameter is not legal where a table name belongs.
+func TestMisplacedOperators(t *testing.T) {
+	runErrs(t, []ecase{
+		{
 			// The reason an operator in an operand position stays an error: it
 			// is what catches a misplaced one, since a string is decided by the
 			// lexical rule before the position is known.
@@ -392,6 +408,49 @@ func TestWindowsAndCTEs(t *testing.T) {
 			want: `write sb.Arg("%") if that string was meant as a value`,
 		},
 		{
+			name: "an operator where a FROM item belongs",
+			stmt: stmt(SELECT, UsersID, FROM, "@>"),
+			want: "FROM: expected a table name, a subquery or a function call, got operator",
+		},
+		{
+			name: "an operator where the UPDATE target belongs",
+			stmt: stmt(UPDATE, "@>", SET, UsersStatus, "=", 1),
+			want: `UPDATE: expected a table name written with sb.I, got operator "@>"`,
+		},
+		{
+			name: "an operator where the INSERT target belongs",
+			stmt: stmt(INSERT, INTO, "@>", sb.P(UsersStatus), VALUES, sb.P(1)),
+			want: `INSERT: expected a table name written with sb.I, got operator "@>"`,
+		},
+		{
+			name: "an operator where the DELETE target belongs",
+			stmt: stmt(DELETE, FROM, "@>"),
+			want: `DELETE: expected a table name written with sb.I, got operator "@>"`,
+		},
+		{
+			name: "an operator where an alias belongs",
+			stmt: stmt(SELECT, UsersID, AS, "@>", FROM, Users),
+			want: `SELECT: expected an alias written with sb.I, got operator "@>"`,
+		},
+		{
+			name: "an operator where a CTE name belongs",
+			stmt: stmt(WITH, "@>", AS, sb.P(SELECT, UsersID, FROM, Users), SELECT, "*"),
+			want: `WITH: expected a query name written with sb.I, got operator "@>"`,
+		},
+		{
+			name: "an operator where a window belongs",
+			stmt: stmt(SELECT, sb.F("COUNT", "*"), OVER, "@>", FROM, Users),
+			want: "expected a window name or a parenthesised window definition, got operator",
+		},
+	})
+}
+
+// A slice passed without "..." compiles, since a slice is an any, and would
+// otherwise bind the whole statement as one parameter. Normalization makes it a
+// token no production accepts.
+func TestSliceWithoutSpread(t *testing.T) {
+	runErrs(t, []ecase{
+		{
 			// A slice passed without "..." is an any like any other and
 			// compiles. It would bind the whole statement as one parameter, so
 			// normalization makes it a token no production accepts.
@@ -403,11 +462,6 @@ func TestWindowsAndCTEs(t *testing.T) {
 			name: "a fragment passed to sb.P as one slice",
 			stmt: stmt(SELECT, UsersID, FROM, Users, WHERE, UsersID, IN, sb.P([]any{1, 2})),
 			want: `a slice of 2 items passed without "..." (token 0); write the slice with "..."`,
-		},
-		{
-			name: "WITH with no statement after it",
-			stmt: stmt(WITH, sb.I("t"), AS, sb.P(SELECT, UsersID, FROM, Users)),
-			want: "statement: expected keyword SELECT",
 		},
 	})
 }
