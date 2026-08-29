@@ -54,7 +54,7 @@ The module root holds no Go files.
   `sb`. Each production file has a paired `*_test.go` holding both the sequences it
   accepts and the sequences it rejects. `./sb/support_test.go` holds what they share: the
   identifier constants, `stmt`, `assertSQL`, `assertErr`, `assertUnsupported` and the two
-  table runners. `./sb/sql_test.go` holds the whole-statement examples, which span
+  table runners. `./sb/example_test.go` holds the whole-statement examples, which span
   several productions and belong to no one file.
 
 The import direction is `sb` → `kw` → `internal/tok`, and `sb` imports `internal/tok`
@@ -205,7 +205,7 @@ in `sb/write.go`. Add to it rather than resolving it silently.
 All four phases are in: `SELECT` with every clause, joins in all their forms, `LATERAL`,
 `GROUP BY`, `HAVING`, set operations, `WITH [RECURSIVE]`, window functions with frames, the
 three write statements with `RETURNING` and `ON CONFLICT`, and the expression grammar.
-Every example in `sql_test.go` passes and none is skipped.
+Every example in `example_test.go` passes and none is skipped.
 
 The `# Scope` section of the `sb` package doc holds the full list of what is still not
 modelled: a type name with a modifier or more than one word, `CAST(x AS type)`,
@@ -225,14 +225,14 @@ Each production function carries the synopsis line from the PostgreSQL reference
 implements, so the grammar can be compared against the source of truth by reading. Keep
 that up when adding a production.
 
-`sql_test.go` is usage documentation as well as a test: each example states the SQL it must
+`example_test.go` is usage documentation as well as a test: each example states the SQL it must
 produce with the expected string broken into lines matching the Go lines above it. Every
 other test file is the coverage of one production file, and holds both halves of it: the
 sequences that production accepts and the sequences it rejects, so everything about one
 clause is read in one place. `norm_test.go` covers the normalization boundary rather than
 a production, and is where `TestOperatorNames`, the lexical rule's table, and
 `TestOperatorPositionIsNotInjectable`, the property that falls out of it, live. Add an
-example to `sql_test.go`, and both the coverage and the newly rejected sequences to the
+example to `example_test.go`, and both the coverage and the newly rejected sequences to the
 test file paired with the production that changed.
 
 Commit messages are lower-case imperative subjects with long prose bodies that explain why
