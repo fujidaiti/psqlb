@@ -199,11 +199,13 @@ All four phases are in: `SELECT` with every clause, joins in all their forms, `L
 three write statements with `RETURNING` and `ON CONFLICT`, and the expression grammar.
 Every example in `sql_test.go` passes and none is skipped.
 
-The `# Scope` section of the `sb` package doc lists what is still not modelled — type names
-with modifiers, `CAST(x AS type)`, frame exclusion, `ORDER BY ... USING`, `ON CONFLICT ON
-CONSTRAINT`, locking clauses, DDL, `MERGE`. There is no escape hatch for an unmodelled
-clause by design: the answer is to add the production. `sb.RawExpr` covers an unmodelled
-expression.
+The `# Scope` section of the `sb` package doc holds the full list of what is still not
+modelled: a type name with a modifier or more than one word, `CAST(x AS type)`,
+`OPERATOR(schema.operator)` (an operator string is emitted verbatim and cannot carry a
+schema), frame exclusion, `ORDER BY ... USING`, `ON CONFLICT ON CONSTRAINT`, `FETCH` and
+locking clauses, `TABLESAMPLE`, DDL, `MERGE`, and array and JSON path syntax. There is no
+escape hatch for an unmodelled clause by design: the answer is to add the production.
+`sb.RawExpr` covers an unmodelled expression.
 
 ## Conventions
 
@@ -217,9 +219,11 @@ that up when adding a production.
 
 `sql_test.go` is usage documentation as well as a test: each example states the SQL it must
 produce with the expected string broken into lines matching the Go lines above it.
-`grammar_test.go` is the mechanical coverage, organised by production. `errors_test.go` is
-the table of sequences that must be rejected. Add examples to the first, production
-coverage to the second, and every newly rejected sequence to the third.
+`grammar_test.go` is the mechanical coverage, organised by production, and ends with the
+two tests that cover the normalization boundary rather than a production: `TestOperatorNames`,
+the lexical rule's table, and `TestOperatorPositionIsNotInjectable`, the property that falls
+out of it. `errors_test.go` is the table of sequences that must be rejected. Add examples to
+the first, production coverage to the second, and every newly rejected sequence to the third.
 
 Commit messages are lower-case imperative subjects with long prose bodies that explain why
 the design changed, what it costs, and what the tests prove about it. Match that.
