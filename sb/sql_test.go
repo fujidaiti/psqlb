@@ -1,11 +1,10 @@
 package sb_test
 
 import (
+	"testing"
+
 	. "github.com/fujidaiti/psqlb/kw"
 	"github.com/fujidaiti/psqlb/sb"
-
-	"strings"
-	"testing"
 )
 
 // ===========================================================================
@@ -16,66 +15,6 @@ import (
 // SQL it must produce and the arguments it must bind. The expected SQL is
 // broken into lines that match the lines of Go above it, so the input and the
 // output can be compared line by line.
-
-const (
-	Users          = sb.I("users")
-	UsersID        = sb.I("users.id")
-	UsersName      = sb.I("users.name")
-	UsersEmail     = sb.I("users.email")
-	UsersStatus    = sb.I("users.status")
-	UsersAge       = sb.I("users.age")
-	UsersCreated   = sb.I("users.created_at")
-	UsersMeta      = sb.I("users.meta")
-	UsersIsPaid    = sb.I("users.paid")
-	UsersHasTicket = sb.I("users.has_ticket")
-	UsersParentID  = sb.I("users.parent_id")
-
-	Orders        = sb.I("orders")
-	OrdersID      = sb.I("orders.id")
-	OrdersUserID  = sb.I("orders.user_id")
-	OrdersTotal   = sb.I("orders.total")
-	OrdersCreated = sb.I("orders.created_at")
-)
-
-// stmt collects its arguments into a []any, so a test case can write stmt(...)
-// instead of []any{...} at each call to assertSQL or assertErr.
-func stmt(items ...any) []any { return items }
-
-// assertSQL builds s and compares both halves of the result. Every argument
-// bound by these examples is a comparable scalar, so == is enough, and it
-// avoids the empty-versus-nil slice question.
-func assertSQL(t *testing.T, stmt []any, wantSQL string, wantArgs ...any) {
-	t.Helper()
-	sql, args, err := sb.ToSQL(stmt...)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if sql != wantSQL {
-		t.Errorf("sql:\n got: %s\nwant: %s", sql, wantSQL)
-	}
-	if len(args) != len(wantArgs) {
-		t.Errorf("args:\n got: %#v\nwant: %#v", args, wantArgs)
-		return
-	}
-	for i := range args {
-		if args[i] != wantArgs[i] {
-			t.Errorf("args[%d]:\n got: %#v\nwant: %#v", i, args[i], wantArgs[i])
-		}
-	}
-}
-
-// assertErr builds s and requires an error mentioning wantSubstr. Nothing in
-// this package panics, so a panic here fails the test the same way.
-func assertErr(t *testing.T, stmt []any, wantSubstr string) {
-	t.Helper()
-	sql, _, err := sb.ToSQL(stmt...)
-	if err == nil {
-		t.Fatalf("want error containing %q, got no error and sql %q", wantSubstr, sql)
-	}
-	if !strings.Contains(err.Error(), wantSubstr) {
-		t.Errorf("error:\n got: %v\nwant substring: %s", err, wantSubstr)
-	}
-}
 
 func TestBasic(t *testing.T) {
 	assertSQL(t,
@@ -509,88 +448,6 @@ func TestDynamic(t *testing.T) {
 			parts = append(parts, ORDER, BY, UsersID, LIMIT, 20)
 
 			assertSQL(t, parts, c.sql, c.args...)
-		})
-	}
-}
-
-// A value made only of operator characters would be taken for an operator by
-// the lexical rule, so sb.Arg is the override. That is the whole reason it
-// exists, since every other value is written as itself.
-func TestArg(t *testing.T) {
-	assertSQL(t,
-		stmt(SELECT, UsersID, FROM, Users, WHERE, UsersName, LIKE, sb.Arg("%")),
-		"SELECT users.id FROM users WHERE users.name LIKE $1",
-		"%",
-	)
-	// Without it, "%" is an operator and lands where an operand belongs.
-	assertErr(t,
-		stmt(SELECT, UsersID, FROM, Users, WHERE, UsersName, LIKE, "%"),
-		"expected an expression",
-	)
-}
-
-// nil is a value like any other and is bound. It used to mean "this token is
-// absent" and was dropped before parsing; it no longer is, because a bare Go
-// value cannot be told from an absent token, so dropping it would change the
-// shape of a statement according to the data in it.
-func TestNilIsAValue(t *testing.T) {
-	assertSQL(t,
-		stmt(SELECT, UsersID, FROM, Users, WHERE, UsersStatus, "=", nil),
-		"SELECT users.id FROM users WHERE users.status = $1",
-		nil,
-	)
-}
-
-// ===========================================================================
-// sb.RawExpr — the edges of $0 substitution
-// ===========================================================================
-
-func TestRawTooFewValues(t *testing.T) {
-	// Leaving the marker in place would produce "b = $0", which Postgres rejects
-	// with "there is no parameter $0", so this is an error.
-	assertErr(t,
-		stmt(SELECT, "*", FROM, Users, WHERE, sb.RawExpr("a = $0 AND b = $0", 1)),
-		"2 $0 marker(s) but 1 value(s)",
-	)
-}
-
-func TestRawSurplusValues(t *testing.T) {
-	// Binding the surplus would leave the statement with a parameter nothing
-	// refers to, and Postgres rejects the count mismatch, so this is an error
-	// too.
-	assertErr(t,
-		stmt(SELECT, "*", FROM, Users, WHERE, sb.RawExpr("a = $0", 1, 2)),
-		"1 $0 marker(s) but 2 value(s)",
-	)
-}
-
-func TestRawDollarWithoutDigits(t *testing.T) {
-	// A "$" with no digits after it is ordinary text, so the delimiters of a
-	// dollar-quoted string pass through untouched. Two fragments in a row are
-	// two items of the SELECT list: the parser does not look inside either one,
-	// so it takes each as one complete expression.
-	assertSQL(t,
-		stmt(SELECT, sb.RawExpr("$$it is here$$"), sb.RawExpr("$tag$so is this$tag$"), FROM, Users),
-		"SELECT $$it is here$$, $tag$so is this$tag$ FROM users",
-	)
-}
-
-func TestRawErrorsOnOtherPlaceholders(t *testing.T) {
-	// A fragment cannot know its own position, so any number other than 0 is a
-	// mistake. It is the one case reported although the string would run,
-	// because a query that runs and reads another clause's value is worse than
-	// one that fails. The last case is the price of that rule: a literal $1
-	// inside a dollar-quoted body cannot be written, because sb.RawExpr cannot tell
-	// it from a placeholder.
-	for _, fragment := range []string{
-		"a = $1",
-		"a = $0 AND b = $2",
-		"a = $01",
-		"a = $00",
-		"$$SELECT $1$$",
-	} {
-		t.Run(fragment, func(t *testing.T) {
-			assertErr(t, stmt(SELECT, "*", FROM, Users, WHERE, sb.RawExpr(fragment)), "only $0 marks a value")
 		})
 	}
 }
