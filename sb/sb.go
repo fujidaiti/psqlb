@@ -213,6 +213,28 @@
 // nested statement numbers correctly at any depth with no counter and no
 // renumbering pass.
 //
+// # Untrusted input
+//
+// A value is bound as a $N parameter and never reaches the SQL text, and an
+// operator is emitted verbatim but cannot carry SQL of its own: a string is
+// emitted only when every byte of it is an operator character, and that set
+// holds no letter, digit, space, quote, parenthesis, comma or semicolon, while
+// "--" and "/*" are rejected outright. A string that is not a well-formed
+// operator name binds instead, and then meets a production that wanted an
+// operator, so it is reported rather than emitted. An operator position is
+// therefore not a way in.
+//
+// I and RawExpr are the exceptions, and they are the only ones. Both are
+// emitted exactly as written, with no quoting, no escaping and — for RawExpr —
+// no inspection at all. Build neither of them from untrusted input. An
+// identifier that has to come from outside the program is the caller's problem
+// to solve, by checking it against a list of the names that are allowed.
+//
+// This is a build-time property of the string that is produced. Whether the
+// $N arguments are then passed to the database as parameters, rather than
+// interpolated by some other layer, is the caller's business: this package
+// hands back a string and a []any and executes nothing.
+//
 // # Errors
 //
 // ToSQL returns an error and nothing panics. There are three classes:
@@ -351,8 +373,10 @@
 //   - No type safety and no semantic checking. Whether a column exists and
 //     whether two types unify are the database's business.
 //
-//   - RawExpr performs no escaping at all. Pass only constants, or strings
-//     assembled in code.
+//   - I and RawExpr are emitted as written and perform no escaping. They are
+//     the only two places a string a caller wrote reaches the SQL text without
+//     the operator rule deciding it, so neither may be built from untrusted
+//     input. See # Untrusted input.
 //
 //   - Aliasing a table needs its own I constant. There is no Users.As("u").
 //
@@ -385,7 +409,8 @@ type Token = tok.Token
 
 // I is an identifier: a table name, a column name, an alias, or a simple type
 // name. Its underlying type is string so that it can be declared with const.
-// The text is emitted verbatim; nothing is quoted and nothing is validated.
+// The text is emitted verbatim; nothing is quoted and nothing is validated, so
+// an I must not be built from untrusted input. See # Untrusted input.
 type I string
 
 func (I) SQLToken() {}

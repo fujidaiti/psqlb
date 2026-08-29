@@ -141,6 +141,15 @@ and a misspelling in a production does not compile.
 `sb.RawExpr` is **one opaque expression**. The parser checks where it may appear and never
 looks inside the string.
 
+`sb.I` and `sb.RawExpr` are the only two things a caller writes that reach the SQL text
+without the operator rule deciding them, so they are the whole injection surface and neither
+may be built from untrusted input. Everything else is either bound as a `$N` parameter or is
+an operator, and an operator name admits no letter, digit, space, quote, parenthesis, comma
+or semicolon and neither `--` nor `/*`, so a payload written in an operator position binds
+and is then rejected by the production that wanted an operator. The `# Untrusted input`
+section of the `sb` package doc states this, and
+`TestOperatorPositionIsNotInjectable` in `grammar_test.go` is the table that holds it.
+
 ### Errors
 
 Three types in `sb/errors.go`, all returned from `ToSQL`, and nothing panics:
